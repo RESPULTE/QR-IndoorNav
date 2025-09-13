@@ -27,7 +27,7 @@ public class MainActivity extends AppCompatActivity {
 
     // State variable for the user's current location (dummy value).
     // This name MUST match one of the "locationName" entries in your map.json
-    private String currentLocationName = "Admin Office";
+    private String currentLocationName = "Lecture Room 1";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {

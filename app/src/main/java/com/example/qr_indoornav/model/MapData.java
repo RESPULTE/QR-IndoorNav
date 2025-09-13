@@ -48,7 +48,7 @@ public class MapData {
             for (int i = 0; i < nodesArray.length(); i++) {
                 JSONObject nodeObject = nodesArray.getJSONObject(i);
                 String id = nodeObject.getString("id");
-                String name = nodeObject.getString("locationName");
+                String name = nodeObject.getString("name");
                 graphInstance.addNode(new Node(id, name));
                 locationNameToNodeIdMap.put(name, id);
             }
@@ -59,8 +59,8 @@ public class MapData {
                 JSONObject edgeObject = edgesArray.getJSONObject(i);
                 String fromId = edgeObject.getString("from");
                 String toId = edgeObject.getString("to");
-                int distance = edgeObject.getInt("distanceMeters");
-                float direction = (float) edgeObject.getDouble("directionDegrees");
+                int distance = edgeObject.getInt("dist");
+                float direction = (float) edgeObject.getDouble("deg");
 
                 // Add the forward edge
                 graphInstance.getNode(fromId).addEdge(toId, distance, direction);

@@ -29,7 +29,7 @@ public class MapView extends View {
     private Paint nodePaint, startNodePaint, endNodePaint;
     private Paint edgePaint, pathPaint, textPaint;
     private final float nodeRadius = 30f;
-    private final float padding = 50f; // Padding around the graph
+    private final float viewPadding = 60f; // Increased padding for better aesthetics
 
     // --- Dynamic Data ---
     private Graph graph;
@@ -43,15 +43,19 @@ public class MapView extends View {
     }
 
     /**
-     * This is the new public method to pass all necessary data to the view.
-     * It triggers the layout calculation and redraws the view.
+     * Public entry point to provide all necessary data to the view.
+     * This triggers the automatic layout calculation and redraws the view.
      */
     public void setData(Graph graph, List<String> pathIds, String startId, String endId) {
         this.graph = graph;
         this.pathNodeIds = pathIds;
         this.startNodeId = startId;
         this.endNodeId = endId;
-        calculateNodeCoordinates(); // Calculate positions before drawing
+        // If the view is already laid out, calculate immediately.
+        // Otherwise, onSizeChanged will handle the initial calculation.
+        if (getWidth() > 0 && getHeight() > 0) {
+            calculateNodeCoordinates();
+        }
         invalidate(); // Request a redraw
     }
 
@@ -77,46 +81,51 @@ public class MapView extends View {
     }
 
     /**
-     * Core of the new logic. Calculates proportional node positions based on graph data.
+     * The core of the dynamic layout logic. It builds, scales, and centers the graph.
      */
     private void calculateNodeCoordinates() {
         if (graph == null || graph.getAllNodes().isEmpty() || getWidth() == 0) {
             return;
         }
 
-        // --- 1. Calculate Relative Positions using BFS and Trigonometry ---
+        // --- Step 1: Calculate Relative Positions using BFS and Trigonometry ---
+        // This builds a "virtual map" where 1 unit = 1 meter from your JSON data.
         Map<String, PointF> relativeCoords = new HashMap<>();
         Queue<String> queue = new ArrayDeque<>();
         Set<String> visited = new HashSet<>();
 
-        // Start layout from the first node in the graph at origin (0,0)
-        String firstNodeId = graph.getAllNodes().get(0).id;
-        queue.add(firstNodeId);
-        visited.add(firstNodeId);
-        relativeCoords.put(firstNodeId, new PointF(0, 0));
+        // Start the layout algorithm from the user's origin for a consistent view.
+        if (startNodeId == null) return;
+        queue.add(startNodeId);
+        visited.add(startNodeId);
+        relativeCoords.put(startNodeId, new PointF(0, 0));
 
         while (!queue.isEmpty()) {
             String currentId = queue.poll();
             Node currentNode = graph.getNode(currentId);
             PointF currentPos = relativeCoords.get(currentId);
 
+            if (currentNode == null || currentPos == null) continue;
+
             for (Edge edge : currentNode.edges.values()) {
                 if (!visited.contains(edge.toNodeId)) {
                     visited.add(edge.toNodeId);
                     queue.add(edge.toNodeId);
 
-                    // Convert direction to radians for trig functions
-                    double angleRad = Math.toRadians(edge.directionDegrees);
-                    // Calculate offset from current node
-                    // Note: We subtract Y because computer graphics Y increases downwards
-                    float dx = (float) (edge.distanceMeters * Math.sin(angleRad));
-                    float dy = (float) (edge.distanceMeters * Math.cos(angleRad));
-                    relativeCoords.put(edge.toNodeId, new PointF(currentPos.x + dx, currentPos.y - dy));
+                    // Convert compass degrees to radians for trigonometric functions.
+                    // We subtract 90 degrees because in standard math, 0 degrees is East,
+                    // but for us, 0 degrees is North.
+                    double angleRad = Math.toRadians(edge.directionDegrees - 90);
+
+                    // Calculate the (x, y) offset from the current node.
+                    float dx = (float) (edge.distanceMeters * Math.cos(angleRad));
+                    float dy = (float) (edge.distanceMeters * Math.sin(angleRad)); // Y is correct in math coords for now
+                    relativeCoords.put(edge.toNodeId, new PointF(currentPos.x + dx, currentPos.y + dy));
                 }
             }
         }
 
-        // --- 2. Find the Bounds of the Relative Graph ---
+        // --- Step 2: Find the Bounding Box of the Virtual Map ---
         float minX = Float.MAX_VALUE, maxX = Float.MIN_VALUE, minY = Float.MAX_VALUE, maxY = Float.MIN_VALUE;
         for (PointF pos : relativeCoords.values()) {
             minX = Math.min(minX, pos.x);
@@ -125,25 +134,33 @@ public class MapView extends View {
             maxY = Math.max(maxY, pos.y);
         }
 
-        // --- 3. Scale and Translate to Fit the View Canvas ---
         float graphWidth = maxX - minX;
         float graphHeight = maxY - minY;
-        float viewWidth = getWidth() - (2 * padding);
-        float viewHeight = getHeight() - (2 * padding);
 
-        // Handle case of single node to avoid division by zero
-        if (graphWidth == 0) graphWidth = 1;
-        if (graphHeight == 0) graphHeight = 1;
+        // Avoid division by zero for single-node or linear graphs
+        if (graphWidth < 1) graphWidth = 1;
+        if (graphHeight < 1) graphHeight = 1;
 
-        // Use the smaller scale factor to maintain aspect ratio
-        float scale = Math.min(viewWidth / graphWidth, viewHeight / graphHeight);
+        // --- Step 3: Calculate the Optimal Scale Factor to Fit the Screen ---
+        float availableWidth = getWidth() - (2 * viewPadding);
+        float availableHeight = getHeight() - (2 * viewPadding);
+
+        // We use the smaller of the two possible scale factors to ensure the entire
+        // graph fits while maintaining its aspect ratio. THIS IS KEY FOR PROPORTIONALITY.
+        float scale = Math.min(availableWidth / graphWidth, availableHeight / graphHeight);
+
+        // --- Step 4: Center the Graph and Calculate Final On-Screen Coordinates ---
+        float scaledGraphWidth = graphWidth * scale;
+        float scaledGraphHeight = graphHeight * scale;
+        float offsetX = (availableWidth - scaledGraphWidth) / 2f;
+        float offsetY = (availableHeight - scaledGraphHeight) / 2f;
 
         nodeCoordinates.clear();
         for (Map.Entry<String, PointF> entry : relativeCoords.entrySet()) {
             PointF relPos = entry.getValue();
-            // Scale and translate the point to fit within the padded view area
-            float screenX = padding + (relPos.x - minX) * scale;
-            float screenY = padding + (relPos.y - minY) * scale;
+            // Translate the point from the virtual map's coordinate system to the screen's.
+            float screenX = viewPadding + offsetX + (relPos.x - minX) * scale;
+            float screenY = viewPadding + offsetY + (relPos.y - minY) * scale;
             nodeCoordinates.put(entry.getKey(), new PointF(screenX, screenY));
         }
     }
@@ -152,7 +169,7 @@ public class MapView extends View {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        // Recalculate coordinates if the view size changes (e.g., device rotation)
+        // This is the first time we know the view's dimensions, so we calculate coordinates here.
         calculateNodeCoordinates();
     }
 
