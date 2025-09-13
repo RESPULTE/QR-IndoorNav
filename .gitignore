@@ -1,0 +1,64 @@
+# Gradle
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local configuration
+/local.properties
+
+# IDE files
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Logs
+*.log
+
+# Android specific
+.cxx/
+captures/
+externalNativeBuild/
+.navigation/
+
+# Keystore files (don’t commit your signing keys!)
+*.jks
+*.keystore
+
+# Generated files
+gen/
+out/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Kotlin/Java
+*.class
+
+# Cache / Artifacts
+*.apk
+*.ap_
+*.dex
+*.aar
+*.jar
+
+# NDK / JNI
+obj/
+*.so
+
+# Google Services (if needed, keep your own version separately)
+google-services.json
+
+# Misc
+*.tmp
+*.swp
+
+# Module-specific (ignore build outputs inside modules too)
+*/build/
+*/.cxx/
+*/captures/
+
+# Local SDK folder
+.sdk/

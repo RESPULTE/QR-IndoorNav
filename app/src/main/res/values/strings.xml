@@ -1,0 +1,18 @@
+<resources>
+    <!-- Strings for MainActivity -->
+    <string name="app_name">qr_indoornav</string>
+    <string name="select_destination_title">Select Your Destination</string>
+    <string name="destination_hint">N004</string>
+    <string name="mic_button_content_description">Use voice to select destination</string>
+    <string name="current_location_label">Your Current Location:</string>
+    <string name="loading_location">Loading...</string>
+    <string name="continue_button">Continue</string>
+
+    <!-- Strings for CompassActivity -->
+    <string name="navigation_compass_title">Navigation Compass</string>
+    <string name="target_label">Target: %s</string>
+    <string name="current_label">Current: %s</string>
+    <string name="audio_label">Audio</string>
+    <!-- ADD THIS NEW STRING -->
+    <string name="steps_remaining_label">Steps Remaining: %d</string>
+</resources>

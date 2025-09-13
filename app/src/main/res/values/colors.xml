@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Keep existing colors -->
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="mic_blue">#4285F4</color>
+    <color name="light_gray">#F1F3F4</color>
+
+    <!-- Add these new colors for the compass -->
+    <color name="compass_bg_default">#D6E6FF</color> <!-- A light blue -->
+    <color name="compass_bg_target_reached">#C8E6C9</color> <!-- A light green -->
+</resources>
