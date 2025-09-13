@@ -1,12 +1,6 @@
 pluginManagement {
     repositories {
-        google {
-            content {
-                includeGroupByRegex("com\\.android.*")
-                includeGroupByRegex("com\\.google.*")
-                includeGroupByRegex("androidx.*")
-            }
-        }
+        google()
         mavenCentral()
         gradlePluginPortal()
     }
@@ -19,6 +13,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "QR-IndoorNav"
-include ':app'
-include ':sdk'
+rootProject.name = "QRIndoorNav" // Your project name might be different
+// MAKE SURE BOTH MODULES ARE LISTED HERE
+include ':app', ':opencv' 

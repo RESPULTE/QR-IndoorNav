@@ -14,7 +14,7 @@ import android.view.View;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-
+import android.widget.Toast; // <-- ADD THIS IMPORT
 import java.util.Locale;
 
 public class ProgressActivity extends AppCompatActivity implements SensorEventListener {

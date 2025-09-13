@@ -18,13 +18,12 @@ import android.widget.Toast;
 
 import com.google.common.util.concurrent.ListenableFuture;
 
-import org.opencv.android.BaseLoaderCallback;
-import org.opencv.android.LoaderCallbackInterface;
 import org.opencv.android.OpenCVLoader;
-import org.opencv.android.Utils;
+import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.imgproc.Imgproc;
 
+import java.nio.ByteBuffer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -35,7 +34,7 @@ public class QRScannerActivity extends AppCompatActivity {
     private PreviewView previewView;
     private ExecutorService cameraExecutor;
 
-    // Load the native C++ library
+    // Load the native C++ library we built
     static {
         System.loadLibrary("qr_indoornav");
     }
@@ -51,11 +50,30 @@ public class QRScannerActivity extends AppCompatActivity {
         previewView = findViewById(R.id.cameraPreview);
         cameraExecutor = Executors.newSingleThreadExecutor();
 
-        if (allPermissionsGranted()) {
-            startCamera();
-        } else {
+        // Check for permissions. If granted, onResume will handle starting the camera.
+        // If not, request them.
+        if (!allPermissionsGranted()) {
             ActivityCompat.requestPermissions(
                     this, new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST_CODE);
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // The best practice is to initialize OpenCV here.
+        // It ensures the library is loaded every time the app is resumed.
+        if (OpenCVLoader.initDebug()) {
+            Log.i(TAG, "OpenCV library found inside package. Using it!");
+            // Now that OpenCV is loaded, check permissions again and start the camera.
+            if (allPermissionsGranted()) {
+                startCamera();
+            } else {
+                Log.w(TAG, "Permissions not granted. Camera will not start.");
+            }
+        } else {
+            Log.e(TAG, "Internal OpenCV library not found.");
+            Toast.makeText(this, "OpenCV failed to load!", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -65,10 +83,8 @@ public class QRScannerActivity extends AppCompatActivity {
         cameraProviderFuture.addListener(() -> {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
-
                 Preview preview = new Preview.Builder().build();
                 preview.setSurfaceProvider(previewView.getSurfaceProvider());
-
                 CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
 
                 ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
@@ -76,17 +92,17 @@ public class QRScannerActivity extends AppCompatActivity {
                         .build();
 
                 imageAnalysis.setAnalyzer(cameraExecutor, image -> {
-                    // This is where we process each frame
-                    Mat mat = imageProxyToMat(image);
-                    if (mat != null) {
-                        // Call the native C++ function
-                        processFrame(mat.getNativeObjAddr());
+                    // Convert the ImageProxy to a Mat object
+                    Mat bgrMat = imageProxyToBgrMat(image);
+                    if (bgrMat != null) {
+                        // Call the native C++ function, passing the memory address of the Mat
+                        processFrame(bgrMat.getNativeObjAddr());
 
-                        // After processing, the mat is modified. We can't directly show it on
-                        // the PreviewView. The C++ code's drawings will be on the Mat, but for
-                        // this example, the guidance text will be the main feedback.
-                        // For a visual overlay, you'd convert the mat back to a Bitmap and
-                        // draw it on a separate ImageView or SurfaceView on top of the PreviewView.
+                        // IMPORTANT: After the C++ code modifies the Mat, you would need
+                        // a separate ImageView overlay to display the result. The PreviewView
+                        // shows the direct camera feed. This setup correctly processes the frame.
+
+                        bgrMat.release(); // Crucial to release the Mat to prevent memory leaks
                     }
                     image.close();
                 });
@@ -100,18 +116,14 @@ public class QRScannerActivity extends AppCompatActivity {
         }, ContextCompat.getMainExecutor(this));
     }
 
-    private Mat imageProxyToMat(androidx.camera.core.ImageProxy image) {
-        // This is a common conversion function from CameraX's YUV format to an OpenCV Mat
-        // For this to work, the OpenCV library must be loaded.
-        if (!OpenCVLoader.initDebug()) {
-            Log.e(TAG, "OpenCV not loaded");
-            return null;
-        }
-
-        // We get the Y, U, and V planes
-        java.nio.ByteBuffer yBuffer = image.getPlanes()[0].getBuffer();
-        java.nio.ByteBuffer uBuffer = image.getPlanes()[1].getBuffer();
-        java.nio.ByteBuffer vBuffer = image.getPlanes()[2].getBuffer();
+    /**
+     * Converts a CameraX ImageProxy object in YUV_420_888 format to an OpenCV Mat in BGR format.
+     * The C++ code expects a BGR image.
+     */
+    private Mat imageProxyToBgrMat(androidx.camera.core.ImageProxy image) {
+        ByteBuffer yBuffer = image.getPlanes()[0].getBuffer();
+        ByteBuffer uBuffer = image.getPlanes()[1].getBuffer();
+        ByteBuffer vBuffer = image.getPlanes()[2].getBuffer();
 
         int ySize = yBuffer.remaining();
         int uSize = uBuffer.remaining();
@@ -122,14 +134,13 @@ public class QRScannerActivity extends AppCompatActivity {
         vBuffer.get(nv21, ySize, vSize);
         uBuffer.get(nv21, ySize + vSize, uSize);
 
-        Mat yuv = new Mat(image.getHeight() + image.getHeight() / 2, image.getWidth(), org.opencv.core.CvType.CV_8UC1);
+        Mat yuv = new Mat(image.getHeight() + image.getHeight() / 2, image.getWidth(), CvType.CV_8UC1);
         yuv.put(0, 0, nv21);
 
-        Mat rgba = new Mat();
-        Imgproc.cvtColor(yuv, rgba, Imgproc.COLOR_YUV2RGBA_NV21, 4);
+        Mat bgr = new Mat();
+        Imgproc.cvtColor(yuv, bgr, Imgproc.COLOR_YUV2BGR_NV21);
         yuv.release();
-
-        return rgba;
+        return bgr;
     }
 
     private boolean allPermissionsGranted() {
@@ -141,7 +152,9 @@ public class QRScannerActivity extends AppCompatActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == CAMERA_PERMISSION_REQUEST_CODE) {
             if (allPermissionsGranted()) {
-                startCamera();
+                // Permission was granted. onResume will be called automatically,
+                // which will then load OpenCV and start the camera.
+                Log.i(TAG, "Camera permission granted.");
             } else {
                 Toast.makeText(this, "Camera permission is required.", Toast.LENGTH_SHORT).show();
                 finish();
