@@ -1,0 +1,19 @@
+{
+  "nodes": [
+    { "id": "N1", "locationName": "Lecture Hall" },
+    { "id": "N2", "locationName": "Library" },
+    { "id": "N3", "locationName": "Cafeteria" },
+    { "id": "N4", "locationName": "Admin Office" },
+    { "id": "N5", "locationName": "Science Wing" },
+    { "id": "N6", "locationName": "Engineering Lab" }
+  ],
+  "edges": [
+    { "from": "N1", "to": "N2", "distanceMeters": 10, "directionDegrees": 90 },
+    { "from": "N1", "to": "N4", "distanceMeters": 20, "directionDegrees": 180 },
+    { "from": "N2", "to": "N3", "distanceMeters": 35, "directionDegrees": 90 },
+    { "from": "N2", "to": "N5", "distanceMeters": 40, "directionDegrees": 180 },
+    { "from": "N3", "to": "N6", "distanceMeters": 30, "directionDegrees": 180 },
+    { "from": "N4", "to": "N5", "distanceMeters": 50, "directionDegrees": 90 },
+    { "from": "N5", "to": "N6", "distanceMeters": 70, "directionDegrees": 90 }
+  ]
+}

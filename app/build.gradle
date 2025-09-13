@@ -71,4 +71,5 @@ dependencies {
     implementation "androidx.camera:camera-lifecycle:${camerax_version}"
     implementation "androidx.camera:camera-view:${camerax_version}"
     implementation project(':opencv')
+    implementation 'com.google.code.gson:gson:2.9.0'
 }

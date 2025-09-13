@@ -10,119 +10,196 @@ import android.view.View;
 
 import androidx.annotation.Nullable;
 
+import com.example.qr_indoornav.model.Edge;
+import com.example.qr_indoornav.model.Graph;
+import com.example.qr_indoornav.model.Node;
+
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Queue;
+import java.util.Set;
 
 public class MapView extends View {
 
+    // --- Paint objects for drawing ---
     private Paint nodePaint, startNodePaint, endNodePaint;
-    private Paint edgePaint, pathPaint;
-    private Paint textPaint;
-    private float nodeRadius = 30f;
+    private Paint edgePaint, pathPaint, textPaint;
+    private final float nodeRadius = 30f;
+    private final float padding = 50f; // Padding around the graph
 
-    // Use a Map to store node coordinates for easy lookup
-    private Map<String, PointF> nodeCoordinates = new HashMap<>();
+    // --- Dynamic Data ---
+    private Graph graph;
+    private Map<String, PointF> nodeCoordinates = new HashMap<>(); // Final, on-screen coordinates
+    private List<String> pathNodeIds = new ArrayList<>();
+    private String startNodeId, endNodeId;
 
     public MapView(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
-        init();
+        initPaints();
     }
 
-    private void init() {
-        // Paint for default (gray) nodes
+    /**
+     * This is the new public method to pass all necessary data to the view.
+     * It triggers the layout calculation and redraws the view.
+     */
+    public void setData(Graph graph, List<String> pathIds, String startId, String endId) {
+        this.graph = graph;
+        this.pathNodeIds = pathIds;
+        this.startNodeId = startId;
+        this.endNodeId = endId;
+        calculateNodeCoordinates(); // Calculate positions before drawing
+        invalidate(); // Request a redraw
+    }
+
+    private void initPaints() {
         nodePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         nodePaint.setColor(Color.GRAY);
-        nodePaint.setStyle(Paint.Style.FILL_AND_STROKE);
-
-        // Paint for start (red) node
         startNodePaint = new Paint(nodePaint);
         startNodePaint.setColor(Color.RED);
-
-        // Paint for end (green) node
         endNodePaint = new Paint(nodePaint);
-        endNodePaint.setColor(Color.parseColor("#4CAF50")); // A nice green
+        endNodePaint.setColor(Color.parseColor("#4CAF50")); // Green
 
-        // Paint for default (black) edges
         edgePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         edgePaint.setColor(Color.BLACK);
         edgePaint.setStrokeWidth(8f);
-
-        // Paint for path (blue) edges
-        pathPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        pathPaint.setColor(Color.parseColor("#03A9F4")); // A nice light blue
+        pathPaint = new Paint(edgePaint);
+        pathPaint.setColor(Color.parseColor("#03A9F4")); // Blue
         pathPaint.setStrokeWidth(12f);
 
-        // Paint for text labels
         textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         textPaint.setColor(Color.BLACK);
         textPaint.setTextSize(40f);
         textPaint.setTextAlign(Paint.Align.CENTER);
     }
 
+    /**
+     * Core of the new logic. Calculates proportional node positions based on graph data.
+     */
+    private void calculateNodeCoordinates() {
+        if (graph == null || graph.getAllNodes().isEmpty() || getWidth() == 0) {
+            return;
+        }
+
+        // --- 1. Calculate Relative Positions using BFS and Trigonometry ---
+        Map<String, PointF> relativeCoords = new HashMap<>();
+        Queue<String> queue = new ArrayDeque<>();
+        Set<String> visited = new HashSet<>();
+
+        // Start layout from the first node in the graph at origin (0,0)
+        String firstNodeId = graph.getAllNodes().get(0).id;
+        queue.add(firstNodeId);
+        visited.add(firstNodeId);
+        relativeCoords.put(firstNodeId, new PointF(0, 0));
+
+        while (!queue.isEmpty()) {
+            String currentId = queue.poll();
+            Node currentNode = graph.getNode(currentId);
+            PointF currentPos = relativeCoords.get(currentId);
+
+            for (Edge edge : currentNode.edges.values()) {
+                if (!visited.contains(edge.toNodeId)) {
+                    visited.add(edge.toNodeId);
+                    queue.add(edge.toNodeId);
+
+                    // Convert direction to radians for trig functions
+                    double angleRad = Math.toRadians(edge.directionDegrees);
+                    // Calculate offset from current node
+                    // Note: We subtract Y because computer graphics Y increases downwards
+                    float dx = (float) (edge.distanceMeters * Math.sin(angleRad));
+                    float dy = (float) (edge.distanceMeters * Math.cos(angleRad));
+                    relativeCoords.put(edge.toNodeId, new PointF(currentPos.x + dx, currentPos.y - dy));
+                }
+            }
+        }
+
+        // --- 2. Find the Bounds of the Relative Graph ---
+        float minX = Float.MAX_VALUE, maxX = Float.MIN_VALUE, minY = Float.MAX_VALUE, maxY = Float.MIN_VALUE;
+        for (PointF pos : relativeCoords.values()) {
+            minX = Math.min(minX, pos.x);
+            maxX = Math.max(maxX, pos.x);
+            minY = Math.min(minY, pos.y);
+            maxY = Math.max(maxY, pos.y);
+        }
+
+        // --- 3. Scale and Translate to Fit the View Canvas ---
+        float graphWidth = maxX - minX;
+        float graphHeight = maxY - minY;
+        float viewWidth = getWidth() - (2 * padding);
+        float viewHeight = getHeight() - (2 * padding);
+
+        // Handle case of single node to avoid division by zero
+        if (graphWidth == 0) graphWidth = 1;
+        if (graphHeight == 0) graphHeight = 1;
+
+        // Use the smaller scale factor to maintain aspect ratio
+        float scale = Math.min(viewWidth / graphWidth, viewHeight / graphHeight);
+
+        nodeCoordinates.clear();
+        for (Map.Entry<String, PointF> entry : relativeCoords.entrySet()) {
+            PointF relPos = entry.getValue();
+            // Scale and translate the point to fit within the padded view area
+            float screenX = padding + (relPos.x - minX) * scale;
+            float screenY = padding + (relPos.y - minY) * scale;
+            nodeCoordinates.put(entry.getKey(), new PointF(screenX, screenY));
+        }
+    }
+
+
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        // Define node coordinates based on the view's dimensions
-        // This makes the drawing responsive to different screen sizes.
-        // The values (e.g., w * 0.1f) are percentages of the width/height.
-        nodeCoordinates.put("N1", new PointF(w * 0.15f, h * 0.25f));
-        nodeCoordinates.put("N2", new PointF(w * 0.5f, h * 0.25f));
-        nodeCoordinates.put("N3", new PointF(w * 0.85f, h * 0.25f));
-        nodeCoordinates.put("N4", new PointF(w * 0.15f, h * 0.75f));
-        nodeCoordinates.put("N5", new PointF(w * 0.5f, h * 0.75f));
-        nodeCoordinates.put("N6", new PointF(w * 0.85f, h * 0.75f));
+        // Recalculate coordinates if the view size changes (e.g., device rotation)
+        calculateNodeCoordinates();
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
-        if (nodeCoordinates.isEmpty()) return;
+        if (graph == null || nodeCoordinates.isEmpty()) return;
 
-        // --- DRAW EDGES ---
-        // This is hardcoded for now. Later, this will be driven by your graph data.
-        drawEdge(canvas, "N1", "N2", edgePaint);
-        drawEdge(canvas, "N1", "N4", edgePaint);
-        drawEdge(canvas, "N2", "N3", edgePaint);
-        drawEdge(canvas, "N2", "N5", edgePaint);
-
-        // --- DRAW THE DYNAMIC PATH ---
-        // This is also hardcoded. Later, you'll pass a list of nodes to this view.
-        drawEdge(canvas, "N4", "N5", pathPaint);
-        drawEdge(canvas, "N5", "N6", pathPaint);
-        drawEdge(canvas, "N6", "N3", pathPaint);
-
-
-        // --- DRAW NODES ---
-        // Draw all nodes. The color will be determined by whether it's a start/end node.
-        // For now, we hardcode N4 as start and N3 as end.
-        for (String nodeName : nodeCoordinates.keySet()) {
-            Paint currentPaint;
-            if (nodeName.equals("N4")) {
-                currentPaint = startNodePaint; // Origin
-            } else if (nodeName.equals("N3")) {
-                currentPaint = endNodePaint;   // Destination
-            } else {
-                currentPaint = nodePaint;      // Intermediate
+        // --- 1. Draw ALL Edges from the Graph in Black (the full network) ---
+        for (Node node : graph.getAllNodes()) {
+            for (Edge edge : node.edges.values()) {
+                drawEdge(canvas, node.id, edge.toNodeId, edgePaint);
             }
-            drawNode(canvas, nodeName, currentPaint);
+        }
+
+        // --- 2. Draw the Calculated Path in Blue on Top ---
+        if (pathNodeIds != null && pathNodeIds.size() > 1) {
+            for (int i = 0; i < pathNodeIds.size() - 1; i++) {
+                drawEdge(canvas, pathNodeIds.get(i), pathNodeIds.get(i + 1), pathPaint);
+            }
+        }
+
+        // --- 3. Draw the Nodes on Top of the Lines ---
+        for (String nodeId : nodeCoordinates.keySet()) {
+            Paint currentPaint = nodePaint;
+            if (nodeId.equals(startNodeId)) {
+                currentPaint = startNodePaint; // Highlight origin
+            } else if (nodeId.equals(endNodeId)) {
+                currentPaint = endNodePaint;   // Highlight destination
+            }
+            drawNode(canvas, nodeId, currentPaint);
         }
     }
 
-    private void drawEdge(Canvas canvas, String from, String to, Paint paint) {
-        PointF start = nodeCoordinates.get(from);
-        PointF end = nodeCoordinates.get(to);
+    private void drawEdge(Canvas canvas, String fromId, String toId, Paint paint) {
+        PointF start = nodeCoordinates.get(fromId);
+        PointF end = nodeCoordinates.get(toId);
         if (start != null && end != null) {
             canvas.drawLine(start.x, start.y, end.x, end.y, paint);
         }
     }
 
-    private void drawNode(Canvas canvas, String name, Paint paint) {
-        PointF pos = nodeCoordinates.get(name);
+    private void drawNode(Canvas canvas, String nodeId, Paint paint) {
+        PointF pos = nodeCoordinates.get(nodeId);
         if (pos != null) {
-            // Draw the circle
             canvas.drawCircle(pos.x, pos.y, nodeRadius, paint);
-            // Draw the label
-            canvas.drawText(name, pos.x, pos.y - nodeRadius - 15, textPaint);
+            canvas.drawText(nodeId, pos.x, pos.y - nodeRadius - 15, textPaint);
         }
     }
 }

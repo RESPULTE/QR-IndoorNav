@@ -85,7 +85,7 @@ public class ProgressActivity extends AppCompatActivity implements SensorEventLi
     private void loadIntentData() {
         Intent intent = getIntent();
         targetDegree = intent.getFloatExtra(EXTRA_TARGET_DEGREE, 0f);
-        totalSteps = intent.getIntExtra(EXTRA_TOTAL_STEPS, 30);
+        totalSteps = intent.getIntExtra(EXTRA_TOTAL_STEPS, 5);
         stepsTaken = intent.getIntExtra(EXTRA_STEPS_TAKEN, 0);
     }
     private void calibrateStepDetector() {
