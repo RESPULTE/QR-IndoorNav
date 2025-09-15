@@ -26,6 +26,10 @@ import com.google.android.material.switchmaterial.SwitchMaterial;
 import java.util.ArrayList;
 import java.util.Locale;
 
+import com.example.qr_indoornav.model.Location;
+import java.util.List; // Import List
+import java.util.stream.Collectors; // Import Stream
+
 public class CompassActivity extends AppCompatActivity implements SensorEventListener {
 
     private static final int PROGRESS_REQUEST_CODE = 1001;
@@ -61,25 +65,30 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
     private final Handler navigationHandler = new Handler();
     private Runnable navigationRunnable;
 
+    private TimelineView timelineView;
+    private List<Location> fullPathLocations;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_compass);
 
-        // Load the map data and the path passed from NavigationActivity
         graph = MapData.getGraph(this);
         pathNodeIds = getIntent().getStringArrayListExtra("PATH_NODE_IDS");
+        String finalDestinationId = getIntent().getStringExtra("FINAL_DESTINATION_ID");
 
-        initializeUI();
+        initializeUI(); // This now includes the TimelineView
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         setupNavigationRunnable();
 
-        // Validate the path. If invalid, exit.
-        if (pathNodeIds == null || pathNodeIds.size() < 2) {
+        if (pathNodeIds == null || pathNodeIds.size() < 2 || finalDestinationId == null) {
             Toast.makeText(this, "Invalid path received.", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
+
+        // --- Build the full list of locations for the timeline ---
+        buildFullPathLocations(finalDestinationId);
 
         // Load the data for the first leg of the journey
         loadCurrentLegData();
@@ -92,6 +101,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         stepsTextView = findViewById(R.id.stepsTextView);
         instructionTextView = findViewById(R.id.instructionTextView);
         compassBackgroundCard = findViewById(R.id.compassBackgroundCard);
+        timelineView = findViewById(R.id.timelineView); // Initialize the new view
         SwitchMaterial audioSwitch = findViewById(R.id.audioSwitch);
         MaterialToolbar toolbar = findViewById(R.id.toolbar);
 
@@ -100,6 +110,28 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
             String state = isChecked ? "enabled" : "disabled";
             Toast.makeText(this, "Audio assistance " + state, Toast.LENGTH_SHORT).show();
         });
+    }
+
+    private void buildFullPathLocations(String finalDestinationId) {
+        // Convert the junction IDs to Location objects
+        fullPathLocations = pathNodeIds.stream()
+                .map(nodeId -> MapData.getLocationById(this, nodeId))
+                .collect(Collectors.toList());
+
+        Location finalDestLocation = MapData.getLocationById(this, finalDestinationId);
+        boolean isRoom = !finalDestLocation.id.equals(finalDestLocation.parentJunctionId);
+
+        // If the destination is a room, add it as the very last item in the timeline
+        if (isRoom) {
+            fullPathLocations.remove(fullPathLocations.size() -1 );
+            fullPathLocations.add(finalDestLocation);
+        }
+    }
+
+    private void updateTimeline() {
+        if (timelineView != null && fullPathLocations != null) {
+            timelineView.updatePath(fullPathLocations, currentLegIndex);
+        }
     }
 
     /**
@@ -139,6 +171,8 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         updateStepsText();
         currentState = AlignmentState.ALIGNING;
         instructionTextView.setText("Align for next checkpoint");
+
+        updateTimeline();
     }
 
     private void setupNavigationRunnable() {
@@ -162,19 +196,17 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == PROGRESS_REQUEST_CODE && resultCode == RESULT_OK && data != null) {
-            // Update our step count with the progress made in ProgressActivity
             stepsTakenInLeg = data.getIntExtra(ProgressActivity.EXTRA_STEPS_TAKEN, stepsTakenInLeg);
-
-            // Check if the leg is complete by converting steps taken to meters
             double metersCovered = stepsTakenInLeg * AVERAGE_STEP_LENGTH_METERS;
+
             if (metersCovered >= distanceForLegMeters) {
                 Toast.makeText(this, "Checkpoint reached!", Toast.LENGTH_SHORT).show();
-                currentLegIndex++;      // Move to the next leg
-                loadCurrentLegData();   // Load the new leg's data
+                currentLegIndex++;
+                loadCurrentLegData(); // This will call updateTimeline() for the new leg
             } else {
-                // User deviated. We just update the UI and wait for re-alignment.
                 Toast.makeText(this, "Re-align to continue", Toast.LENGTH_SHORT).show();
                 updateStepsText();
+                // No need to update timeline here, as the current node hasn't changed
             }
         }
     }

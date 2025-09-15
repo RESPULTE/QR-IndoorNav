@@ -33,6 +33,12 @@
             android:orientation="vertical"
             android:padding="24dp">
 
+            <com.example.qr_indoornav.TimelineView
+                android:id="@+id/timelineView"
+                android:layout_width="match_parent"
+                android:layout_height="100dp"
+                android:layout_marginTop="24dp" />
+
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

@@ -122,9 +122,11 @@ public class NavigationActivity extends AppCompatActivity {
         confirmButton.setOnClickListener(v -> {
             Intent navIntent = new Intent(NavigationActivity.this, CompassActivity.class);
             navIntent.putStringArrayListExtra("PATH_NODE_IDS", pathList);
-            // We can also pass the final calculated distance to the next activity if needed
-            // navIntent.putExtra("TOTAL_DISTANCE", totalDistance);
+            // --- ADD THIS LINE ---
+            navIntent.putExtra("FINAL_DESTINATION_ID", destinationId);
             startActivity(navIntent);
         });
+
+
     }
 }
