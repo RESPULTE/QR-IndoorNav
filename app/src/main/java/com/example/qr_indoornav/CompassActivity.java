@@ -132,7 +132,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         Location finalDestLocation = MapData.getLocationById(this, finalDestinationId);
         fullPathLocations.add(finalDestLocation);
 
-        lastEdge = graph.getNode(finalDestLocation.parentJunctionId).edges.get(pathNodeIds.get(pathNodeIds.size()-1));
+        lastEdge = graph.getNode(pathNodeIds.get(pathNodeIds.size()-2)).edges.get(pathNodeIds.get(pathNodeIds.size()-1));
 
         // removing the node: this is shit programing lol
         fullPathLocations.remove(fullPathLocations.size() - 2);

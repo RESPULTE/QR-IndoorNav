@@ -4,16 +4,15 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
-import androidx.camera.core.ImageProxy; // Use the specific class for clarity
+import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import androidx.appcompat.app.AlertDialog;
-
 
 import android.Manifest;
+import android.content.Intent; // Import Intent
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.os.Bundle;
@@ -25,7 +24,7 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import org.opencv.android.OpenCVLoader;
 import org.opencv.android.Utils;
-import org.opencv.core.Core; // NEW: Import Core for rotation constants
+import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.imgproc.Imgproc;
@@ -34,14 +33,11 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import com.example.qr_indoornav.QRParser;
-
 public class QRScannerActivity extends AppCompatActivity {
     private static final String TAG = "QRScannerActivity";
 
-    private boolean isProcessing = false; // Flag to prevent multiple dialogs
-    private String expectedNodeId;
-    private int remainingLegs;
+    // This flag is still useful to prevent sending multiple results for a single scan session
+    private boolean isProcessing = false;
 
     private static final int CAMERA_PERMISSION_REQUEST_CODE = 101;
 
@@ -65,8 +61,9 @@ public class QRScannerActivity extends AppCompatActivity {
         overlayImageView = findViewById(R.id.overlayImageView);
         cameraExecutor = Executors.newSingleThreadExecutor();
 
-        expectedNodeId = getIntent().getStringExtra("EXPECTED_NODE_ID");
-        remainingLegs = getIntent().getIntExtra("REMAINING_LEGS", 0);
+        // We don't need these extras anymore, as CompassActivity will handle all verification
+        // expectedNodeId = getIntent().getStringExtra("EXPECTED_NODE_ID");
+        // remainingLegs = getIntent().getIntExtra("REMAINING_LEGS", 0);
 
         if (!allPermissionsGranted()) {
             ActivityCompat.requestPermissions(
@@ -88,61 +85,8 @@ public class QRScannerActivity extends AppCompatActivity {
         }
     }
 
-
-    /**
-     * Verifies the decoded QR text against the expected node ID and shows the appropriate dialog.
-     */
-    private void verifyQRCode(String decodedJson) {
-        QRParser.ScannedQRData scannedData = QRParser.parse(decodedJson);
-
-        if (scannedData.type != QRParser.ScannedQRData.QRType.INVALID && scannedData.id.equals(expectedNodeId)) {
-            // --- SUCCESS ---
-            runOnUiThread(() -> showSuccessDialog());
-        } else {
-            // --- FAILURE ---
-            runOnUiThread(() -> showErrorDialog(scannedData.id));
-        }
-    }
-
-    /**
-     * Shows a success dialog to the user.
-     */
-    private void showSuccessDialog() {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Correct Location!");
-
-        String message;
-        if (remainingLegs > 0) {
-            message = "You have arrived at " + expectedNodeId + ".\n" +
-                    remainingLegs + " more QR code(s) to scan before your destination.";
-        } else {
-            message = "You have arrived at your final destination: " + expectedNodeId + "!";
-        }
-        builder.setMessage(message);
-
-        builder.setPositiveButton("Proceed", (dialog, which) -> {
-            setResult(RESULT_OK); // Signal success back to CompassActivity
-            finish();
-        });
-        builder.setCancelable(false); // Prevent user from dismissing by tapping outside
-        builder.show();
-    }
-
-    /**
-     * Shows an error dialog and allows the user to rescan.
-     */
-    private void showErrorDialog(String scannedId) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Wrong QR Code");
-        builder.setMessage("Expected: " + expectedNodeId + "\nScanned: " + scannedId + "\n\nPlease find the correct QR code and try again.");
-
-        builder.setPositiveButton("Rescan", (dialog, which) -> {
-            isProcessing = false; // Allow the analyzer to process frames again
-            dialog.dismiss();
-        });
-        builder.setCancelable(false);
-        builder.show();
-    }
+    // REMOVED: The verifyQRCode, showSuccessDialog, and showErrorDialog methods are no longer needed
+    // in this activity. CompassActivity handles all of that logic now.
 
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
@@ -159,17 +103,15 @@ public class QRScannerActivity extends AppCompatActivity {
                         .build();
 
                 imageAnalysis.setAnalyzer(cameraExecutor, image -> {
-                    // Prevent processing new frames if we're already handling a decoded result
                     if (isProcessing) {
                         image.close();
                         return;
                     }
-                    // The conversion AND rotation is now handled in a single helper function.
+
                     Mat bgrMat = getRotatedBgrMatFromImage(image);
                     if (bgrMat != null) {
                         String decodedResult = processFrame(bgrMat.getNativeObjAddr());
 
-                        // Update the visual overlay with guidance drawings
                         if (bitmapForOverlay == null || bitmapForOverlay.getWidth() != bgrMat.cols() || bitmapForOverlay.getHeight() != bgrMat.rows()) {
                             bitmapForOverlay = Bitmap.createBitmap(bgrMat.cols(), bgrMat.rows(), Bitmap.Config.ARGB_8888);
                         }
@@ -178,11 +120,21 @@ public class QRScannerActivity extends AppCompatActivity {
 
                         bgrMat.release();
 
-                        // If the C++ module decoded something, verify it.
+                        // *** START OF THE FIX ***
+                        // If the C++ module decoded something, send it back to CompassActivity and finish.
                         if (decodedResult != null && !decodedResult.isEmpty()) {
-                            isProcessing = true; // Stop the analyzer from processing more frames
-                            verifyQRCode(decodedResult);
+                            isProcessing = true; // Stop the analyzer from sending more results
+
+                            // Create an Intent to hold the result
+                            Intent resultIntent = new Intent();
+                            // Put the decoded text into the Intent. The key MUST match what CompassActivity expects.
+                            resultIntent.putExtra("DECODED_TEXT", decodedResult);
+                            // Set the result to OK and attach the Intent with the data
+                            setResult(RESULT_OK, resultIntent);
+                            // Close this activity and return to CompassActivity
+                            finish();
                         }
+                        // *** END OF THE FIX ***
                     }
                     image.close();
                 });
@@ -197,13 +149,11 @@ public class QRScannerActivity extends AppCompatActivity {
     }
 
     /**
-     * NEW and IMPROVED: Converts an ImageProxy to a BGR Mat and applies the correct rotation.
-     *
+     * Converts an ImageProxy to a BGR Mat and applies the correct rotation.
      * @param image The ImageProxy from CameraX.
      * @return A correctly rotated Mat in BGR color space.
      */
     private Mat getRotatedBgrMatFromImage(ImageProxy image) {
-        // 1. Convert YUV to BGR Mat as before
         ByteBuffer yBuffer = image.getPlanes()[0].getBuffer();
         ByteBuffer uBuffer = image.getPlanes()[1].getBuffer();
         ByteBuffer vBuffer = image.getPlanes()[2].getBuffer();
@@ -220,11 +170,7 @@ public class QRScannerActivity extends AppCompatActivity {
         Imgproc.cvtColor(yuv, bgrMat, Imgproc.COLOR_YUV2BGR_NV21);
         yuv.release();
 
-        // 2. Get the rotation degrees from the ImageProxy
         int rotationDegrees = image.getImageInfo().getRotationDegrees();
-
-        // 3. Rotate the Mat based on the degrees
-        //    The C++ code expects an upright image.
         if (rotationDegrees != 0) {
             int rotateCode;
             switch (rotationDegrees) {
@@ -238,15 +184,12 @@ public class QRScannerActivity extends AppCompatActivity {
                     rotateCode = Core.ROTATE_90_COUNTERCLOCKWISE;
                     break;
                 default:
-                    // Should not happen, but as a fallback, don't rotate.
                     return bgrMat;
             }
             Core.rotate(bgrMat, bgrMat, rotateCode);
         }
-
         return bgrMat;
     }
-
 
     private boolean allPermissionsGranted() {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;

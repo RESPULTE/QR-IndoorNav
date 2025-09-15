@@ -13,6 +13,6 @@ public class Node {
     }
 
     public void addEdge(String toNodeId, int distanceMeters, float direction, List<String> roomIds) {
-        edges.put(toNodeId, new Edge(toNodeId, distanceMeters, direction, roomIds));
+        edges.put(toNodeId, new Edge(id+toNodeId, toNodeId, distanceMeters, direction, roomIds));
     }
 }
