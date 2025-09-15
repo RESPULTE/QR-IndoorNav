@@ -256,7 +256,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         }
 
         scannerIntent.putExtra("EXPECTED_NODE_ID", expectedNextNodeId); // <--- ADD THIS LINE
-        scannerIntent.putExtra("REMAINING_LEGS", (fullPathLocations.size() - 1) - currentLegIndex - (isFinalLeg ? 0 : 1)); // <--- ADD THIS LINE for dialog message
+        scannerIntent.putExtra("REMAINING_LEGS", (fullPathLocations.size() - 1) - currentLegIndex - (isFinalLeg ? 1 : 0)); // <--- ADD THIS LINE for dialog message
 
         startActivityForResult(scannerIntent, QR_SCANNER_REQUEST_CODE);
     }
@@ -279,7 +279,6 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
             expectedNextNodeId = fullPathLocations.get(currentLegIndex + 1).id;
         }
 
-        Log.i("TAG", "expectedNextNodeId: " + expectedNextNodeId);
 
         if (scannedData.type != QRParser.ScannedQRData.QRType.INVALID && scannedData.id.equals(expectedNextNodeId)) {
             // --- SUCCESS: Scanned QR matches the expected next stop ---
