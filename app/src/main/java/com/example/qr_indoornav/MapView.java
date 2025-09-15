@@ -7,13 +7,10 @@ import android.graphics.Paint;
 import android.graphics.PointF;
 import android.util.AttributeSet;
 import android.view.View;
-
 import androidx.annotation.Nullable;
-
 import com.example.qr_indoornav.model.Edge;
 import com.example.qr_indoornav.model.Graph;
 import com.example.qr_indoornav.model.Node;
-
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -26,37 +23,42 @@ import java.util.Set;
 public class MapView extends View {
 
     // --- Paint objects for drawing ---
-    private Paint nodePaint, startNodePaint, endNodePaint;
+    private Paint nodePaint, startNodePaint, endNodePaint, pathNodePaint;
     private Paint edgePaint, pathPaint, textPaint;
     private final float nodeRadius = 30f;
-    private final float viewPadding = 60f; // Increased padding for better aesthetics
+    private final float roomMarkerRadius = 15f;
+    private final float viewPadding = 60f;
 
     // --- Dynamic Data ---
     private Graph graph;
-    private Map<String, PointF> nodeCoordinates = new HashMap<>(); // Final, on-screen coordinates
+    private Map<String, PointF> nodeCoordinates = new HashMap<>();
     private List<String> pathNodeIds = new ArrayList<>();
-    private String startNodeId, endNodeId;
+    private String startNodeId;
+
+    // --- Unified Destination Handling ---
+    private boolean destinationIsRoom = false;
+    private String finalDestinationId;
+    private PointF roomCoordinates = null;
 
     public MapView(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
         initPaints();
     }
 
-    /**
-     * Public entry point to provide all necessary data to the view.
-     * This triggers the automatic layout calculation and redraws the view.
-     */
-    public void setData(Graph graph, List<String> pathIds, String startId, String endId) {
+    public void setData(Graph graph, List<String> pathIds, String destinationId) {
         this.graph = graph;
         this.pathNodeIds = pathIds;
-        this.startNodeId = startId;
-        this.endNodeId = endId;
-        // If the view is already laid out, calculate immediately.
-        // Otherwise, onSizeChanged will handle the initial calculation.
-        if (getWidth() > 0 && getHeight() > 0) {
+        this.finalDestinationId = destinationId;
+        this.destinationIsRoom = !graph.getAllNodes().stream().anyMatch(n -> n.id.equals(destinationId));
+
+        if (!pathIds.isEmpty()) {
+            this.startNodeId = pathIds.get(0);
+        }
+
+        if (getWidth() > 0) {
             calculateNodeCoordinates();
         }
-        invalidate(); // Request a redraw
+        invalidate();
     }
 
     private void initPaints() {
@@ -65,24 +67,21 @@ public class MapView extends View {
         startNodePaint = new Paint(nodePaint);
         startNodePaint.setColor(Color.RED);
         endNodePaint = new Paint(nodePaint);
-        endNodePaint.setColor(Color.parseColor("#4CAF50")); // Green
-
+        endNodePaint.setColor(Color.parseColor("#4CAF50")); // Green for destination
+        pathNodePaint = new Paint(nodePaint);
+        pathNodePaint.setColor(Color.parseColor("#303F9F")); // Dark Blue
         edgePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         edgePaint.setColor(Color.BLACK);
         edgePaint.setStrokeWidth(8f);
         pathPaint = new Paint(edgePaint);
-        pathPaint.setColor(Color.parseColor("#03A9F4")); // Blue
+        pathPaint.setColor(Color.parseColor("#03A9F4")); // Light Blue
         pathPaint.setStrokeWidth(12f);
-
         textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         textPaint.setColor(Color.BLACK);
         textPaint.setTextSize(40f);
         textPaint.setTextAlign(Paint.Align.CENTER);
     }
 
-    /**
-     * The core of the dynamic layout logic. It builds, scales, and centers the graph.
-     */
     private void calculateNodeCoordinates() {
         if (graph == null || graph.getAllNodes().isEmpty() || getWidth() == 0) {
             return;
@@ -147,11 +146,12 @@ public class MapView extends View {
 
         // We use the smaller of the two possible scale factors to ensure the entire
         // graph fits while maintaining its aspect ratio. THIS IS KEY FOR PROPORTIONALITY.
-        float scale = Math.min(availableWidth / graphWidth, availableHeight / graphHeight);
+        float scale_w = availableWidth / graphWidth;
+        float scale_h = availableHeight / graphHeight;
 
         // --- Step 4: Center the Graph and Calculate Final On-Screen Coordinates ---
-        float scaledGraphWidth = graphWidth * scale;
-        float scaledGraphHeight = graphHeight * scale;
+        float scaledGraphWidth = graphWidth * scale_w;
+        float scaledGraphHeight = graphHeight * scale_h;
         float offsetX = (availableWidth - scaledGraphWidth) / 2f;
         float offsetY = (availableHeight - scaledGraphHeight) / 2f;
 
@@ -159,17 +159,38 @@ public class MapView extends View {
         for (Map.Entry<String, PointF> entry : relativeCoords.entrySet()) {
             PointF relPos = entry.getValue();
             // Translate the point from the virtual map's coordinate system to the screen's.
-            float screenX = viewPadding + offsetX + (relPos.x - minX) * scale;
-            float screenY = viewPadding + offsetY + (relPos.y - minY) * scale;
+            float screenX = viewPadding + offsetX + (relPos.x - minX) * scale_w;
+            float screenY = viewPadding + offsetY + (relPos.y - minY) * scale_h;
             nodeCoordinates.put(entry.getKey(), new PointF(screenX, screenY));
         }
-    }
 
+        // --- Step 5: If the destination is a room, calculate its specific screen coordinates ---
+        roomCoordinates = null; // Reset
+        if (destinationIsRoom && pathNodeIds.size() >= 2) {
+            String finalEdgeStartId = pathNodeIds.get(pathNodeIds.size() - 2);
+            String finalEdgeEndId = pathNodeIds.get(pathNodeIds.size() - 1);
+
+            Edge finalEdge = graph.getNode(finalEdgeStartId).edges.get(finalEdgeEndId);
+            if (finalEdge != null) {
+                int roomIndex = finalEdge.roomIds.indexOf(finalDestinationId);
+                int totalRooms = finalEdge.roomIds.size();
+                if (roomIndex != -1 && totalRooms > 0) {
+                    float ratio = (float) (roomIndex + 1) / (totalRooms + 1);
+                    PointF startPos = nodeCoordinates.get(finalEdgeStartId);
+                    PointF endPos = nodeCoordinates.get(finalEdgeEndId);
+                    if (startPos != null && endPos != null) {
+                        float roomX = startPos.x + (endPos.x - startPos.x) * ratio;
+                        float roomY = startPos.y + (endPos.y - startPos.y) * ratio;
+                        roomCoordinates = new PointF(roomX, roomY);
+                    }
+                }
+            }
+        }
+    }
 
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        // This is the first time we know the view's dimensions, so we calculate coordinates here.
         calculateNodeCoordinates();
     }
 
@@ -178,32 +199,57 @@ public class MapView extends View {
         super.onDraw(canvas);
         if (graph == null || nodeCoordinates.isEmpty()) return;
 
-        // --- 1. Draw ALL Edges from the Graph in Black (the full network) ---
+        // --- 1. Draw ALL Edges from the Graph in Black ---
         for (Node node : graph.getAllNodes()) {
             for (Edge edge : node.edges.values()) {
                 drawEdge(canvas, node.id, edge.toNodeId, edgePaint);
             }
         }
 
-        // --- 2. Draw the Calculated Path in Blue on Top ---
+        // --- 2. Draw the Calculated Path in Light Blue ---
         if (pathNodeIds != null && pathNodeIds.size() > 1) {
-            for (int i = 0; i < pathNodeIds.size() - 1; i++) {
+            int fullEdgesToDraw = destinationIsRoom ? pathNodeIds.size() - 2 : pathNodeIds.size() - 1;
+            for (int i = 0; i < fullEdgesToDraw; i++) {
                 drawEdge(canvas, pathNodeIds.get(i), pathNodeIds.get(i + 1), pathPaint);
+            }
+            if (destinationIsRoom && roomCoordinates != null) {
+                String finalEdgeStartId = pathNodeIds.get(pathNodeIds.size() - 2);
+                PointF startPos = nodeCoordinates.get(finalEdgeStartId);
+                if (startPos != null) {
+                    canvas.drawLine(startPos.x, startPos.y, roomCoordinates.x, roomCoordinates.y, pathPaint);
+                }
             }
         }
 
-        // --- 3. Draw the Nodes on Top of the Lines ---
+        // --- 3. Draw the Junction Nodes with NEW Coloring Logic ---
+        // Create a set of nodes that should be colored blue (traversed nodes, excluding the destination)
+        Set<String> traversedNodes = new HashSet<>();
+        if (pathNodeIds.size() > 1) {
+            // Add all nodes from the start up to the second-to-last node.
+            traversedNodes.addAll(pathNodeIds.subList(0, pathNodeIds.size() - 1));
+        }
+
         for (String nodeId : nodeCoordinates.keySet()) {
-            Paint currentPaint = nodePaint;
+            Paint currentPaint;
             if (nodeId.equals(startNodeId)) {
-                currentPaint = startNodePaint; // Highlight origin
-            } else if (nodeId.equals(endNodeId)) {
-                currentPaint = endNodePaint;   // Highlight destination
+                currentPaint = startNodePaint; // Origin is RED
+            } else if (!destinationIsRoom && nodeId.equals(finalDestinationId)) {
+                currentPaint = endNodePaint; // Destination Junction is GREEN
+            } else if (traversedNodes.contains(nodeId)) {
+                currentPaint = pathNodePaint; // Traversed nodes are DARK BLUE
+            } else {
+                currentPaint = nodePaint; // Non-path nodes are GRAY
             }
             drawNode(canvas, nodeId, currentPaint);
         }
+
+        // --- 4. Draw the Room Marker if it's the Destination ---
+        if (destinationIsRoom && roomCoordinates != null) {
+            canvas.drawCircle(roomCoordinates.x, roomCoordinates.y, roomMarkerRadius, endNodePaint); // Room is GREEN
+        }
     }
 
+    // --- drawEdge() and drawNode() are UNCHANGED ---
     private void drawEdge(Canvas canvas, String fromId, String toId, Paint paint) {
         PointF start = nodeCoordinates.get(fromId);
         PointF end = nodeCoordinates.get(toId);
@@ -211,7 +257,6 @@ public class MapView extends View {
             canvas.drawLine(start.x, start.y, end.x, end.y, paint);
         }
     }
-
     private void drawNode(Canvas canvas, String nodeId, Paint paint) {
         PointF pos = nodeCoordinates.get(nodeId);
         if (pos != null) {

@@ -1,131 +1,97 @@
 package com.example.qr_indoornav;
 
 import androidx.appcompat.app.AppCompatActivity;
-
 import android.content.Intent;
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
-
+import com.example.qr_indoornav.model.Location;
 import com.example.qr_indoornav.model.MapData;
-import com.example.qr_indoornav.model.Node;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
-
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class MainActivity extends AppCompatActivity {
 
-    // UI Components
+    private static final String TAG = "MainActivity";
     private AutoCompleteTextView autoCompleteTextView;
-    private Button continueButton;
-    private TextView currentLocationValue;
-    private FloatingActionButton micButton;
-
-    // State variable for the user's current location (dummy value).
-    // This name MUST match one of the "locationName" entries in your map.json
-    private String currentLocationName = "Lecture Room 1";
+    private String currentJunctionId;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // Initialize UI components by finding them in the layout
         initializeUI();
-
-        // Populate the dropdown with locations from the map data AND add click listeners
         setupDropdown();
-
-        // Set up the click listeners for the other buttons
         setupClickListeners();
-
-        // Display the hardcoded current location
         loadCurrentLocation();
     }
 
-    /**
-     * Finds and assigns all the UI views from the layout file.
-     */
     private void initializeUI() {
         autoCompleteTextView = findViewById(R.id.autoCompleteTextView);
-        continueButton = findViewById(R.id.continueButton);
-        currentLocationValue = findViewById(R.id.currentLocationValue);
-        micButton = findViewById(R.id.micButton);
     }
 
-    /**
-     * Fetches location data from MapData (which reads from JSON),
-     * creates an adapter, and sets it for the AutoCompleteTextView.
-     * --- THIS METHOD CONTAINS THE FIX ---
-     */
     private void setupDropdown() {
-        // Get all locations (nodes) from the MapData class, passing the context
-        List<Node> locations = MapData.getLocations(this);
+        List<Location> allLocations = MapData.getAllLocations(this);
 
-        // Use a stream to extract the names, sort them alphabetically, and collect into a List
-        List<String> locationNames = locations.stream()
-                .map(node -> node.locationName)
-                .sorted()
-                .collect(Collectors.toList());
+        // Add a check for better debugging and user feedback
+        if (allLocations.isEmpty()) {
+            Log.e(TAG, "The list of locations is empty! Check MapData and map.json.");
+            Toast.makeText(this, "Error: Could not load map locations.", Toast.LENGTH_LONG).show();
+            return;
+        }
 
-        // Create an ArrayAdapter to display the location names in the dropdown
-        ArrayAdapter<String> adapterItems = new ArrayAdapter<>(this, android.R.layout.simple_dropdown_item_1line, locationNames);
-
-        // Set the adapter on the AutoCompleteTextView
-        autoCompleteTextView.setAdapter(adapterItems);
-
-        // --- FIX: ADD THIS ONCLICKLISTENER ---
-        // By default, an AutoCompleteTextView with inputType="none" doesn't know to open
-        // its list when clicked. We must explicitly tell it to show the dropdown.
+        // The adapter works with the Location object's toString() method
+        ArrayAdapter<Location> adapter = new ArrayAdapter<>(this, android.R.layout.simple_dropdown_item_1line, allLocations);
+        autoCompleteTextView.setAdapter(adapter);
+        autoCompleteTextView.setOnFocusChangeListener((v, hasFocus) -> {
+            if (hasFocus) autoCompleteTextView.showDropDown();
+        });
         autoCompleteTextView.setOnClickListener(v -> autoCompleteTextView.showDropDown());
     }
 
-    /**
-     * Sets up the OnClickListeners for the interactive elements on the screen.
-     */
+    private void loadCurrentLocation() {
+        currentJunctionId = MapData.getCurrentJunctionId(this);
+        Location currentLocation = MapData.getLocationById(this, currentJunctionId);
+        TextView currentLocationValue = findViewById(R.id.currentLocationValue);
+        if (currentLocation != null) {
+            currentLocationValue.setText(currentLocation.displayName);
+        } else {
+            currentLocationValue.setText("Unknown Location");
+            Log.e(TAG, "Could not find display name for current junction ID: " + currentJunctionId);
+        }
+    }
+
     private void setupClickListeners() {
-        // Listener for the "Continue" button
+        Button continueButton = findViewById(R.id.continueButton);
         continueButton.setOnClickListener(v -> {
-            String selectedDestinationName = autoCompleteTextView.getText().toString();
+            String selectedText = autoCompleteTextView.getText().toString();
+            // Find the selected Location object from the master list
+            Location selectedLocation = MapData.getAllLocations(this).stream()
+                    .filter(loc -> loc.displayName.equals(selectedText))
+                    .findFirst().orElse(null);
 
-            // --- Validation Logic ---
-            if (selectedDestinationName.isEmpty() || selectedDestinationName.equals(getString(R.string.destination_hint)) || MapData.getNodeIdByName(this, selectedDestinationName) == null) {
-                Toast.makeText(MainActivity.this, "Please select a valid destination.", Toast.LENGTH_SHORT).show();
-                return; // Stop further execution
+            if (selectedLocation == null) {
+                Toast.makeText(this, "Please select a valid destination from the list.", Toast.LENGTH_SHORT).show();
+                return;
             }
 
-            if (selectedDestinationName.equals(currentLocationName)) {
-                Toast.makeText(MainActivity.this, "Origin and destination cannot be the same.", Toast.LENGTH_SHORT).show();
-                return; // Stop further execution
+            if (selectedLocation.id.equals(currentJunctionId)) {
+                Toast.makeText(this, "You are already at this junction.", Toast.LENGTH_SHORT).show();
+                return;
             }
 
-            // --- Navigation Logic ---
-            // If validation passes, create an intent to start the NavigationActivity
             Intent intent = new Intent(MainActivity.this, NavigationActivity.class);
-
-            // Pass the origin and destination names to the next activity for path planning
-            intent.putExtra("USER_ORIGIN_NAME", currentLocationName);
-            intent.putExtra("USER_DESTINATION_NAME", selectedDestinationName);
-
-            // Start the activity
+            intent.putExtra("USER_ORIGIN_ID", currentJunctionId);
+            intent.putExtra("USER_DESTINATION_ID", selectedLocation.id);
             startActivity(intent);
         });
 
-        // Placeholder listener for the microphone button
-        micButton.setOnClickListener(v -> {
-            Toast.makeText(MainActivity.this, "Voice-to-text will be implemented later.", Toast.LENGTH_SHORT).show();
-        });
-    }
-
-    /**
-     * Displays the current location on the screen.
-     * For now, it uses the hardcoded value from the 'currentLocationName' variable.
-     */
-    private void loadCurrentLocation() {
-        currentLocationValue.setText(currentLocationName);
+        FloatingActionButton micButton = findViewById(R.id.micButton);
+        micButton.setOnClickListener(v -> Toast.makeText(MainActivity.this, "Voice input not implemented.", Toast.LENGTH_SHORT).show());
     }
 }
