@@ -84,27 +84,10 @@
                 tools:text="Current: 120W" />
 
             <TextView
-                android:id="@+id/stepsTextView"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="24dp"
-                android:textColor="@color/black"
-                android:textSize="28sp"
-                android:textStyle="bold"
-                tools:text="25" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="steps remaining"
-                android:textAllCaps="true"
-                android:textSize="14sp" />
-
-            <TextView
                 android:id="@+id/instructionTextView"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="24dp"
                 android:text="Align with the target direction"
                 android:textColor="@color/mic_blue"
                 android:textSize="16sp"

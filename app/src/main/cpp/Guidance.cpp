@@ -1,15 +1,21 @@
 #include <opencv2/opencv.hpp>
-#include <iostream>
+
+#include "Guidance.h"
+#include "QRDecoder.h" // NEW: Include our new decoder module
 #include <vector>
 #include <cmath>
-#include <numeric>
-#include <functional> // Required for std::function
+#include <functional>
 
 // --- Configuration Constants for easy tuning ---
 // Preprocessing
 const int ADAPTIVE_THRESH_BLOCK_SIZE = 11; // Smaller for finer details
 const int ADAPTIVE_THRESH_C = 7;
 const double CLAHE_CLIP_LIMIT = 2.0;
+
+// These values are based on trial and error and may need tuning for your specific camera/resolution.
+// They correspond to the QR code being roughly 0.7-1.0 meters away.
+const double MIN_DECODING_AREA = 0;
+const double MAX_DECODING_AREA = 20000.0;
 
 // Finder Pattern Validation
 const double MIN_FINDER_AREA_ORIGINAL = 25.0; // Lowered to catch very small patterns
@@ -232,10 +238,8 @@ void provideUserGuidance(cv::Mat& displayFrame, const std::vector<FinderPattern>
 
 
 // --- NEW: This is the main entry point that replaces your old main() function ---
-void processFrameForGuidance(cv::Mat& frame) {
-    if (frame.empty()) return;
-
-    // --- The logic from your old main() while loop goes here ---
+std::string processFrameForGuidance(cv::Mat& frame) {
+    if (frame.empty()) return "";
 
     // 1. Process at original scale
     std::vector<FinderPattern> all_patterns = processFrameForFinderPatterns(
@@ -266,4 +270,24 @@ void processFrameForGuidance(cv::Mat& frame) {
 
     // 4. Provide guidance (draws directly onto the 'frame' Mat)
     provideUserGuidance(frame, final_patterns);
+
+    std::string decoded_text = "";
+    if (!final_patterns.empty()) {
+        double totalArea = 0;
+        for (const auto& p : final_patterns) totalArea += p.area;
+
+        // Check if the QR code's apparent size is within our target range
+        if (totalArea >= MIN_DECODING_AREA && totalArea <= MAX_DECODING_AREA) {
+            // We are close enough, attempt to decode.
+            decoded_text = decodeQRCode(frame);
+
+            if (!decoded_text.empty()) {
+                // If successful, draw a confirmation on the screen
+                cv::Point textOrg(frame.cols / 2 - 100, frame.rows / 2);
+                cv::putText(frame, "DECODED!", textOrg, cv::FONT_HERSHEY_TRIPLEX, 1.5, cv::Scalar(0, 255, 0), 3);
+            }
+        }
+    }
+
+    return decoded_text;
 }

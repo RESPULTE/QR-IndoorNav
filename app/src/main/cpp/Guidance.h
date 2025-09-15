@@ -2,9 +2,9 @@
 #define QR_INDOORNAV_GUIDANCE_H
 
 #include <opencv2/opencv.hpp>
+#include <string> // Add string include
 
-// Declare the function that will be called from our JNI bridge.
-// It takes a reference to a Mat object and modifies it in place.
-void processFrameForGuidance(cv::Mat& frame);
+// The function now returns the decoded string, if any.
+std::string processFrameForGuidance(cv::Mat& frame);
 
 #endif //QR_INDOORNAV_GUIDANCE_H

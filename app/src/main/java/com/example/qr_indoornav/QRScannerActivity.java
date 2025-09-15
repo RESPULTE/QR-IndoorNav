@@ -12,6 +12,7 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import android.Manifest;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.os.Bundle;
@@ -34,6 +35,8 @@ import java.util.concurrent.Executors;
 
 public class QRScannerActivity extends AppCompatActivity {
     private static final String TAG = "QRScannerActivity";
+
+    private boolean isDecoding = false; // Add a flag to prevent multiple decodes
     private static final int CAMERA_PERMISSION_REQUEST_CODE = 101;
 
     private PreviewView previewView;
@@ -45,7 +48,7 @@ public class QRScannerActivity extends AppCompatActivity {
         System.loadLibrary("qr_indoornav");
     }
 
-    public native void processFrame(long matAddr);
+    public native String processFrame(long matAddr);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -91,14 +94,17 @@ public class QRScannerActivity extends AppCompatActivity {
                         .build();
 
                 imageAnalysis.setAnalyzer(cameraExecutor, image -> {
-                    // --- MODIFIED LOGIC ---
+                    // Prevent processing new frames if we're already handling a decoded result
+                    if (isDecoding) {
+                        image.close();
+                        return;
+                    }
                     // The conversion AND rotation is now handled in a single helper function.
                     Mat bgrMat = getRotatedBgrMatFromImage(image);
-                    // --- END MODIFIED LOGIC ---
 
                     if (bgrMat != null) {
                         // After this call, bgrMat is now RGBA with drawings on it.
-                        processFrame(bgrMat.getNativeObjAddr());
+                        String decodedResult = processFrame(bgrMat.getNativeObjAddr());
 
                         if (bitmapForOverlay == null || bitmapForOverlay.getWidth() != bgrMat.cols() || bitmapForOverlay.getHeight() != bgrMat.rows()) {
                             // Create or recreate the Bitmap if the dimensions change (e.g., device rotation)
@@ -109,6 +115,16 @@ public class QRScannerActivity extends AppCompatActivity {
                         runOnUiThread(() -> overlayImageView.setImageBitmap(bitmapForOverlay));
 
                         bgrMat.release();
+
+                        if (decodedResult != null && !decodedResult.isEmpty()) {
+                            isDecoding = true; // Set flag to stop further processing
+
+                            // Create a result Intent to send the data back
+                            Intent resultIntent = new Intent();
+                            resultIntent.putExtra("DECODED_TEXT", decodedResult);
+                            setResult(RESULT_OK, resultIntent);
+                            finish(); // Close this activity and return to CompassActivity
+                            }
                     }
                     image.close();
                 });

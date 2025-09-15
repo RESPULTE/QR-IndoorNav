@@ -10,19 +10,28 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Bundle;
 import android.os.Handler;
+import android.util.Log; // Import Log for debugging
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast; // <-- ADD THIS IMPORT
+import android.widget.Toast;
+
 import java.util.Locale;
 
-public class ProgressActivity extends AppCompatActivity implements SensorEventListener {
+/**
+ * ProgressActivity displays the user's walking progress towards the next checkpoint.
+ * It uses {@link StepDetector} to count steps and monitors orientation for deviations.
+ * It returns the final step count and outcome (completed/cancelled) to {@link CompassActivity}.
+ */
+public class ProgressActivity extends AppCompatActivity implements SensorEventListener, StepDetector.OnStepListener {
 
-    // --- Intent Keys (for passing data) ---
+    private static final String TAG = "ProgressActivity";
+
+    // --- Keys for receiving data from Intent ---
     public static final String EXTRA_TARGET_DEGREE = "EXTRA_TARGET_DEGREE";
-    public static final String EXTRA_TOTAL_STEPS = "EXTRA_TOTAL_STEPS";
-    public static final String EXTRA_STEPS_TAKEN = "EXTRA_STEPS_TAKEN";
+    public static final String EXTRA_DISTANCE_METERS = "EXTRA_DISTANCE_METERS";
+    public static final String EXTRA_INITIAL_STEPS = "EXTRA_INITIAL_STEPS"; // Key to receive initial steps
 
     // --- UI Components ---
     private ProgressBar progressBar;
@@ -35,26 +44,19 @@ public class ProgressActivity extends AppCompatActivity implements SensorEventLi
     private final float[] accelerometerReading = new float[3];
     private final float[] magnetometerReading = new float[3];
     private final float[] rotationMatrix = new float[9];
-    private final float[] orientationAngles = new float[3];
     private boolean hasAccelerometerData = false;
     private boolean hasMagnetometerData = false;
 
     // --- Navigation variables ---
     private float targetDegree;
-    private int totalSteps, stepsTaken;
-    private static final int ALIGNMENT_MARGIN_OF_ERROR = 15; // Margin for checking if user is facing the right way
+    private int totalDistanceMeters;
+    private static final int ALIGNMENT_MARGIN_OF_ERROR = 15; // Wider margin during active walking
 
-    // --- Step Detection variables ---
-    private float dynamicThreshold;
-    private long lastStepTime = 0;
-    private static final long STEP_TIME_GATE_MS = 300;
-    private static final float USER_HEIGHT_CM = 175.0f;
-    // --- NEW: Margin for checking if the STEP was in the forward direction ---
-    private static final int MOVEMENT_DIRECTION_MARGIN_DEGREES = 45; // User's step can be +/- 45 degrees from target
+    // --- Unified Step Detection Module ---
+    private StepDetector stepDetector;
 
-    // --- Animation Handlers ---
-    private Handler dotsHandler = new Handler();
-    private boolean isScannerLaunched = false; // Add this flag
+    // --- Animation Handler for blinking dots ---
+    private final Handler dotsHandler = new Handler();
     private int dotIndex = 0;
 
     @Override
@@ -62,17 +64,18 @@ public class ProgressActivity extends AppCompatActivity implements SensorEventLi
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_progress);
 
+        // Instantiate our unified StepDetector and pass this activity as the listener.
+        stepDetector = new StepDetector(this);
+
         initializeUI();
-        loadIntentData();
-        calibrateStepDetector();
+        loadIntentData(); // Load data from the Intent and set initial state for StepDetector
 
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
 
-        updateProgressUI();
+        updateProgressUI(); // Show initial state (progress based on initial steps)
         startDotsAnimation();
     }
 
-    // ... (initializeUI, loadIntentData, calibrateStepDetector, startDotsAnimation methods are unchanged)
     private void initializeUI() {
         progressBar = findViewById(R.id.progressBar);
         progressPercentageText = findViewById(R.id.progressPercentageText);
@@ -82,29 +85,41 @@ public class ProgressActivity extends AppCompatActivity implements SensorEventLi
         dot2 = findViewById(R.id.dot2);
         dot3 = findViewById(R.id.dot3);
     }
+
+    /**
+     * Loads navigation parameters (target degree, total distance, initial steps)
+     * from the {@link Intent} that started this activity.
+     */
     private void loadIntentData() {
         Intent intent = getIntent();
         targetDegree = intent.getFloatExtra(EXTRA_TARGET_DEGREE, 0f);
-        totalSteps = intent.getIntExtra(EXTRA_TOTAL_STEPS, 5);
-        stepsTaken = intent.getIntExtra(EXTRA_STEPS_TAKEN, 0);
+        totalDistanceMeters = intent.getIntExtra(EXTRA_DISTANCE_METERS, 30);
+
+        // Retrieve the initial steps taken for this leg from the calling activity
+        int initialSteps = intent.getIntExtra(EXTRA_INITIAL_STEPS, 0);
+        stepDetector.reset(initialSteps); // Set the StepDetector to start counting from this value
+        Log.d(TAG, "ProgressActivity loaded: Target=" + targetDegree + ", Distance=" + totalDistanceMeters + ", Initial Steps=" + initialSteps);
     }
-    private void calibrateStepDetector() {
-        float baseThreshold = 11.0f;
-        float sensitivity = 0.05f;
-        dynamicThreshold = baseThreshold + (USER_HEIGHT_CM - 170.0f) * sensitivity;
-    }
+
+    /**
+     * Starts the blinking animation for the three dots at the bottom of the screen.
+     */
     private void startDotsAnimation() {
         dotsHandler.post(new Runnable() {
             @Override
             public void run() {
+                // Dim all dots
                 dot1.setAlpha(0.3f);
                 dot2.setAlpha(0.3f);
                 dot3.setAlpha(0.3f);
+
+                // Highlight the current dot in the sequence
                 if (dotIndex == 0) dot1.setAlpha(1.0f);
                 else if (dotIndex == 1) dot2.setAlpha(1.0f);
                 else dot3.setAlpha(1.0f);
-                dotIndex = (dotIndex + 1) % 3;
-                dotsHandler.postDelayed(this, 400); // Blink speed
+
+                dotIndex = (dotIndex + 1) % 3; // Cycle through 0, 1, 2
+                dotsHandler.postDelayed(this, 400); // Repeat every 400ms
             }
         });
     }
@@ -112,6 +127,7 @@ public class ProgressActivity extends AppCompatActivity implements SensorEventLi
     @Override
     protected void onResume() {
         super.onResume();
+        // Register sensor listeners when the activity becomes active
         Sensor accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         if (accelerometer != null) {
             sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI);
@@ -125,10 +141,15 @@ public class ProgressActivity extends AppCompatActivity implements SensorEventLi
     @Override
     protected void onPause() {
         super.onPause();
+        // Unregister sensor listeners and stop animations to save battery and resources
         sensorManager.unregisterListener(this);
-        dotsHandler.removeCallbacksAndMessages(null); // Stop animation
+        dotsHandler.removeCallbacksAndMessages(null);
     }
 
+    /**
+     * Callback method for {@link SensorEventListener} when sensor values change.
+     * It feeds the raw sensor data to the {@link StepDetector}.
+     */
     @Override
     public void onSensorChanged(SensorEvent event) {
         if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
@@ -139,134 +160,123 @@ public class ProgressActivity extends AppCompatActivity implements SensorEventLi
             hasMagnetometerData = true;
         }
 
-        // Only proceed if we have fresh data from both sensors
+        // Only proceed if we have valid data from both accelerometer and magnetometer
         if (hasAccelerometerData && hasMagnetometerData) {
-            // First, update the rotation matrix and check if the user is still aligned
-            boolean isStillAligned = updateOrientationAndCheckAlignment();
-
-            // Only try to detect a step if the user is facing the correct direction
+            boolean isStillAligned = updateOrientationAndCheckAlignment(); // Check if user is still facing the right way
             if (isStillAligned) {
-                // Pass the current rotation matrix to the step detector for directional analysis
-                detectStep(accelerometerReading, rotationMatrix);
+                // Delegate step detection to our unified StepDetector module
+                // Pass current accelerometer data, device rotation, and target direction
+                stepDetector.processSensorData(accelerometerReading, rotationMatrix, targetDegree);
             }
         }
     }
 
     /**
-     * MODIFIED: This method now takes the full acceleration vector and the current rotation matrix.
+     * This is the required callback method from our {@link StepDetector.OnStepListener} interface.
+     * It is automatically called by the {@link StepDetector} whenever a valid step is detected.
+     * @param totalSteps The new total number of steps taken for this leg.
      */
-    private void detectStep(float[] acceleration, float[] currentRotationMatrix) {
-        long now = System.currentTimeMillis();
-        if (now - lastStepTime < STEP_TIME_GATE_MS) return;
+    @Override
+    public void onStep(int totalSteps) {
+        updateProgressUI(); // Update the UI to reflect the new step count
 
-        float magnitude = (float) Math.sqrt(acceleration[0] * acceleration[0] + acceleration[1] * acceleration[1] + acceleration[2] * acceleration[2]);
-
-        if (magnitude > dynamicThreshold) {
-            if (isStepInForwardDirection(acceleration, currentRotationMatrix)) {
-                lastStepTime = now;
-                stepsTaken++;
-                updateProgressUI(); // updateProgressUI will now contain the trigger
-
-                if (stepsTaken >= totalSteps) {
-                    handleArrival();
-                }
-            }
+        // Check if the destination for this leg has been reached
+        if (stepDetector.getMetersCovered() >= totalDistanceMeters) {
+            finishWithResult(RESULT_OK); // Finish and signal success
         }
     }
 
     /**
-     * NEW: This is the core logic for detecting forward movement.
-     * It transforms the phone's acceleration into world coordinates and checks its direction.
-     * @return true if the step's primary horizontal acceleration is towards the target direction.
-     */
-    private boolean isStepInForwardDirection(float[] acceleration, float[] currentRotationMatrix) {
-        float[] accelerationInWorldCoords = new float[3];
-        // We need to multiply the rotation matrix by the acceleration vector.
-        // The formula for this transformation is:
-        // x' = R[0]*x + R[1]*y + R[2]*z
-        // y' = R[3]*x + R[4]*y + R[5]*z
-        // z' = R[6]*x + R[7]*y + R[8]*z
-        accelerationInWorldCoords[0] = currentRotationMatrix[0] * acceleration[0] + currentRotationMatrix[1] * acceleration[1] + currentRotationMatrix[2] * acceleration[2];
-        accelerationInWorldCoords[1] = currentRotationMatrix[3] * acceleration[0] + currentRotationMatrix[4] * acceleration[1] + currentRotationMatrix[5] * acceleration[2];
-        // We don't need the Z (vertical) component for directional checking.
-
-        // Now, get the direction of the horizontal movement (x', y') in degrees.
-        // Note: In the world coordinate system from Android sensors, +Y is North, +X is East.
-        // atan2(x, y) gives the angle from the +Y axis (North).
-        float movementAzimuth = (float) Math.toDegrees(Math.atan2(accelerationInWorldCoords[0], accelerationInWorldCoords[1]));
-        if (movementAzimuth < 0) {
-            movementAzimuth += 360;
-        }
-
-        // Calculate the angular difference between movement direction and target direction.
-        float difference = Math.abs(movementAzimuth - targetDegree);
-        if (difference > 180) {
-            difference = 360 - difference;
-        }
-
-        // If the difference is within our margin, it's a valid forward step.
-        return difference <= MOVEMENT_DIRECTION_MARGIN_DEGREES;
-    }
-
-    /**
-     * MODIFIED: This method now returns a boolean indicating if the user is aligned.
+     * Determines the device's current orientation and checks if it aligns with the target direction.
+     * If deviation is too high, it triggers {@link #handleDeviation()}.
+     * @return true if the user is currently aligned with the target, false otherwise.
      */
     private boolean updateOrientationAndCheckAlignment() {
+        // Calculate the device's rotation matrix
+        float[] orientationAngles = new float[3]; // Used only for calculating currentDegree
         SensorManager.getRotationMatrix(rotationMatrix, null, accelerometerReading, magnetometerReading);
-        SensorManager.getOrientation(rotationMatrix, orientationAngles);
+        SensorManager.getOrientation(rotationMatrix, orientationAngles); // Calculate orientation angles from the rotation matrix
+
         float currentDegree = (float) Math.toDegrees(orientationAngles[0]);
-        if (currentDegree < 0) {
-            currentDegree += 360;
-        }
+        if (currentDegree < 0) currentDegree += 360; // Normalize to 0-360 degrees
 
         float difference = Math.abs(currentDegree - targetDegree);
-        if (difference > 180) {
-            difference = 360 - difference;
-        }
+        if (difference > 180) difference = 360 - difference; // Find the shortest angular difference
 
         if (difference > ALIGNMENT_MARGIN_OF_ERROR) {
-            handleDeviation();
-            return false; // User is NOT aligned
+            handleDeviation(); // User has deviated too much
+            return false;
         }
-        return true; // User IS aligned
+        return true;
     }
 
+    /**
+     * Called when the user deviates too far from the target direction.
+     * It signals {@link CompassActivity} that the progress was interrupted.
+     */
     private void handleDeviation() {
-        // ... (This method is unchanged)
+        // Stop sensor processing and animations
         sensorManager.unregisterListener(this);
         dotsHandler.removeCallbacksAndMessages(null);
-        deviationIndicator.setVisibility(View.VISIBLE);
+
+        deviationIndicator.setVisibility(View.VISIBLE); // Show the red 'X' indicator
+
+        finishWithResult(RESULT_CANCELED); // Signal interruption
+    }
+
+    /**
+     * NEW: A unified method to finish the activity and send back the current step count.
+     * This is called on arrival (RESULT_OK), deviation (RESULT_CANCELED), or when the back button is pressed.
+     * @param resultCode Either {@link android.app.Activity#RESULT_OK} (completed) or {@link android.app.Activity#RESULT_CANCELED} (interrupted).
+     */
+    private void finishWithResult(int resultCode) {
+        // Make sure sensors and animations are stopped if not already
+        sensorManager.unregisterListener(this);
+        dotsHandler.removeCallbacksAndMessages(null);
+
+        // Show appropriate Toast message
+        if (resultCode == RESULT_OK) {
+            Toast.makeText(this, "Leg completed!", Toast.LENGTH_SHORT).show();
+        } else if (resultCode == RESULT_CANCELED) {
+            // Toast for deviation is handled by CompassActivity
+            Toast.makeText(this, "Direction deviated!", Toast.LENGTH_SHORT).show();
+        }
+
+        // Prepare the result Intent to send back the accumulated step count
         Intent resultIntent = new Intent();
-        resultIntent.putExtra(EXTRA_STEPS_TAKEN, stepsTaken);
-        setResult(RESULT_OK, resultIntent);
+        resultIntent.putExtra("EXTRA_STEPS_TAKEN", stepDetector.getStepsTaken());
+        setResult(resultCode, resultIntent);
+
+        // Delay finishing to allow the user to see any final messages/indicators
         new Handler().postDelayed(this::finish, 1500);
     }
 
-    private void handleArrival() {
-        progressStepsText.setText("You have arrived!");
-        dotsHandler.removeCallbacksAndMessages(null);
-        // This stops all sensor listening to prevent further steps/deviation checks
-        sensorManager.unregisterListener(this);
-        // TODO: In a real app, you might want to automatically navigate to the next screen or show a finish button.
-    }
-
+    /**
+     * Updates the UI elements (progress bar, percentage, steps remaining) based on
+     * the current step count from the {@link StepDetector}.
+     */
     private void updateProgressUI() {
-        int remainingSteps = Math.max(0, totalSteps - stepsTaken);
-        int progress = (totalSteps > 0) ? (int) ((stepsTaken / (float) totalSteps) * 100) : 0;
+        // Get remaining steps directly from the detector
+        int stepsRemaining = stepDetector.getRemainingSteps(totalDistanceMeters);
+
+        // Calculate progress percentage based on meters covered
+        double metersCovered = stepDetector.getMetersCovered();
+        int progress = (totalDistanceMeters > 0) ? (int) ((metersCovered / totalDistanceMeters) * 100) : 0;
+        progress = Math.min(100, progress); // Cap progress at 100%
 
         progressBar.setProgress(progress);
         progressPercentageText.setText(String.format(Locale.getDefault(), "%d%%", progress));
-        progressStepsText.setText(String.format(Locale.getDefault(), "%d steps left", remainingSteps));
+        progressStepsText.setText(String.format(Locale.getDefault(), "%d steps left", stepsRemaining));
+    }
 
-        // --- TRIGGER LOGIC ---
-        if (progress >= 80 && !isScannerLaunched) {
-            isScannerLaunched = true; // Prevent multiple launches
-            Toast.makeText(this, "Approaching destination, starting QR scanner...", Toast.LENGTH_LONG).show();
-            Intent intent = new Intent(this, QRScannerActivity.class);
-            startActivity(intent);
-            // Optionally finish this activity if you don't want the user to return to it
-            finish();
-        }
+    /**
+     * Overrides the default back button behavior to send back a {@link #RESULT_CANCELED}
+     * with the current progress.
+     */
+    @Override
+    public void onBackPressed() {
+        super.onBackPressed();
+        finishWithResult(RESULT_CANCELED);
     }
 
     @Override
