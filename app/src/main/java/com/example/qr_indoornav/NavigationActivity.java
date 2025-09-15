@@ -49,31 +49,23 @@ public class NavigationActivity extends AppCompatActivity {
         Graph graph = MapData.getGraph(this);
         List<String> pathNodeIds = graph.findShortestPath(startJunctionId, endJunctionId);
 
-        // --- CRITICAL FIX: Ensure the path includes the edge where the room is located ---
+        // Handle rooms connected directly or requiring a "next hop"
         if (isRoomDestination) {
-            // Case 1: Room is on an edge connected to the start junction.
-            // The pathfinder returns just the start node. We must find the other end of the edge.
             if (pathNodeIds.size() == 1) {
                 for (Edge edge : graph.getNode(startJunctionId).edges.values()) {
                     if (edge.roomIds.contains(destinationId)) {
-                        pathNodeIds.add(edge.toNodeId); // Add the adjacent node to complete the path
+                        pathNodeIds.add(edge.toNodeId);
                         break;
                     }
                 }
-            }
-            // Case 2: The path leads to the room's parent junction, but the room is on a different edge.
-            // We need to find the "next hop" from the end of the path to reach the room's edge.
-            else if (pathNodeIds.size() > 1) {
+            } else if (pathNodeIds.size() > 1) {
                 String lastJunctionInPath = pathNodeIds.get(pathNodeIds.size() - 1);
-                // Check if the room is on the final edge of the current path.
                 String secondLastJunction = pathNodeIds.get(pathNodeIds.size() - 2);
                 Edge finalEdge = graph.getNode(secondLastJunction).edges.get(lastJunctionInPath);
-
-                // If the room is NOT on the final edge, we need to find the correct next hop.
                 if (finalEdge == null || !finalEdge.roomIds.contains(destinationId)) {
                     for (Edge edge : graph.getNode(lastJunctionInPath).edges.values()) {
                         if (edge.roomIds.contains(destinationId)) {
-                            pathNodeIds.add(edge.toNodeId); // Add the true adjacent node
+                            pathNodeIds.add(edge.toNodeId);
                             break;
                         }
                     }
@@ -81,36 +73,57 @@ public class NavigationActivity extends AppCompatActivity {
             }
         }
 
-
         if (pathNodeIds.isEmpty() || (pathNodeIds.size() == 1 && !isRoomDestination)) {
             Toast.makeText(this, "Could not find a valid path.", Toast.LENGTH_LONG).show();
             distanceTextView.setText("Path not found");
             return;
         }
 
-        // --- Pass the corrected path and final destination ID to the MapView ---
         mapView.setData(graph, pathNodeIds, destinationId);
 
-        // --- UI Text Update ---
+        // --- REFINED DISTANCE CALCULATION ---
         int totalDistance = 0;
-        for (int i = 0; i < pathNodeIds.size() - 1; i++) {
+        // Calculate the distance of all the full path segments
+        for (int i = 0; i < pathNodeIds.size() - 2; i++) {
             Edge edge = graph.getNode(pathNodeIds.get(i)).edges.get(pathNodeIds.get(i + 1));
             if (edge != null) totalDistance += edge.distanceMeters;
         }
 
-        if (isRoomDestination) {
-            distanceTextView.setText(String.format(Locale.getDefault(),
-                    "Path to destination area: %d meters\nYour room is on the final path segment.",
-                    totalDistance));
-        } else {
-            distanceTextView.setText(String.format(Locale.getDefault(), "%d meters (approx.)", totalDistance));
+        // Now, handle the final segment specifically
+        if (pathNodeIds.size() >= 2) {
+            String finalEdgeStartId = pathNodeIds.get(pathNodeIds.size() - 2);
+            String finalEdgeEndId = pathNodeIds.get(pathNodeIds.size() - 1);
+            Edge finalEdge = graph.getNode(finalEdgeStartId).edges.get(finalEdgeEndId);
+
+            if (finalEdge != null) {
+                if (isRoomDestination) {
+                    // Find the room's position on the edge and calculate partial distance
+                    int roomIndex = finalEdge.roomIds.indexOf(destinationId);
+                    int totalRoomsOnEdge = finalEdge.roomIds.size();
+                    if (roomIndex != -1) {
+                        // Calculate ratio (e.g., room 3 of 10 is at ~36% of the way)
+                        float ratio = (float) (roomIndex + 1) / (totalRoomsOnEdge + 1);
+                        totalDistance += (int) (finalEdge.distanceMeters * ratio); // Add the partial distance
+                    } else {
+                        // Fallback in case room isn't found (shouldn't happen with prior logic)
+                        totalDistance += finalEdge.distanceMeters;
+                    }
+                } else {
+                    // If the destination is a junction, add the full length of the final edge
+                    totalDistance += finalEdge.distanceMeters;
+                }
+            }
         }
+
+        distanceTextView.setText(String.format(Locale.getDefault(), "%d meters (approx.)", totalDistance));
 
         // --- Set up Confirm Button ---
         ArrayList<String> pathList = new ArrayList<>(pathNodeIds);
         confirmButton.setOnClickListener(v -> {
             Intent navIntent = new Intent(NavigationActivity.this, CompassActivity.class);
             navIntent.putStringArrayListExtra("PATH_NODE_IDS", pathList);
+            // We can also pass the final calculated distance to the next activity if needed
+            // navIntent.putExtra("TOTAL_DISTANCE", totalDistance);
             startActivity(navIntent);
         });
     }
