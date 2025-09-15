@@ -10,9 +10,10 @@ import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.appcompat.app.AlertDialog;
+
 
 import android.Manifest;
-import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.os.Bundle;
@@ -33,10 +34,15 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import com.example.qr_indoornav.QRParser;
+
 public class QRScannerActivity extends AppCompatActivity {
     private static final String TAG = "QRScannerActivity";
 
-    private boolean isDecoding = false; // Add a flag to prevent multiple decodes
+    private boolean isProcessing = false; // Flag to prevent multiple dialogs
+    private String expectedNodeId;
+    private int remainingLegs;
+
     private static final int CAMERA_PERMISSION_REQUEST_CODE = 101;
 
     private PreviewView previewView;
@@ -59,6 +65,9 @@ public class QRScannerActivity extends AppCompatActivity {
         overlayImageView = findViewById(R.id.overlayImageView);
         cameraExecutor = Executors.newSingleThreadExecutor();
 
+        expectedNodeId = getIntent().getStringExtra("EXPECTED_NODE_ID");
+        remainingLegs = getIntent().getIntExtra("REMAINING_LEGS", 0);
+
         if (!allPermissionsGranted()) {
             ActivityCompat.requestPermissions(
                     this, new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST_CODE);
@@ -79,6 +88,62 @@ public class QRScannerActivity extends AppCompatActivity {
         }
     }
 
+
+    /**
+     * Verifies the decoded QR text against the expected node ID and shows the appropriate dialog.
+     */
+    private void verifyQRCode(String decodedJson) {
+        QRParser.ScannedQRData scannedData = QRParser.parse(decodedJson);
+
+        if (scannedData.type != QRParser.ScannedQRData.QRType.INVALID && scannedData.id.equals(expectedNodeId)) {
+            // --- SUCCESS ---
+            runOnUiThread(() -> showSuccessDialog());
+        } else {
+            // --- FAILURE ---
+            runOnUiThread(() -> showErrorDialog(scannedData.id));
+        }
+    }
+
+    /**
+     * Shows a success dialog to the user.
+     */
+    private void showSuccessDialog() {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Correct Location!");
+
+        String message;
+        if (remainingLegs > 0) {
+            message = "You have arrived at " + expectedNodeId + ".\n" +
+                    remainingLegs + " more QR code(s) to scan before your destination.";
+        } else {
+            message = "You have arrived at your final destination: " + expectedNodeId + "!";
+        }
+        builder.setMessage(message);
+
+        builder.setPositiveButton("Proceed", (dialog, which) -> {
+            setResult(RESULT_OK); // Signal success back to CompassActivity
+            finish();
+        });
+        builder.setCancelable(false); // Prevent user from dismissing by tapping outside
+        builder.show();
+    }
+
+    /**
+     * Shows an error dialog and allows the user to rescan.
+     */
+    private void showErrorDialog(String scannedId) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Wrong QR Code");
+        builder.setMessage("Expected: " + expectedNodeId + "\nScanned: " + scannedId + "\n\nPlease find the correct QR code and try again.");
+
+        builder.setPositiveButton("Rescan", (dialog, which) -> {
+            isProcessing = false; // Allow the analyzer to process frames again
+            dialog.dismiss();
+        });
+        builder.setCancelable(false);
+        builder.show();
+    }
+
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
 
@@ -95,36 +160,29 @@ public class QRScannerActivity extends AppCompatActivity {
 
                 imageAnalysis.setAnalyzer(cameraExecutor, image -> {
                     // Prevent processing new frames if we're already handling a decoded result
-                    if (isDecoding) {
+                    if (isProcessing) {
                         image.close();
                         return;
                     }
                     // The conversion AND rotation is now handled in a single helper function.
                     Mat bgrMat = getRotatedBgrMatFromImage(image);
-
                     if (bgrMat != null) {
-                        // After this call, bgrMat is now RGBA with drawings on it.
                         String decodedResult = processFrame(bgrMat.getNativeObjAddr());
 
+                        // Update the visual overlay with guidance drawings
                         if (bitmapForOverlay == null || bitmapForOverlay.getWidth() != bgrMat.cols() || bitmapForOverlay.getHeight() != bgrMat.rows()) {
-                            // Create or recreate the Bitmap if the dimensions change (e.g., device rotation)
                             bitmapForOverlay = Bitmap.createBitmap(bgrMat.cols(), bgrMat.rows(), Bitmap.Config.ARGB_8888);
                         }
-
                         Utils.matToBitmap(bgrMat, bitmapForOverlay);
                         runOnUiThread(() -> overlayImageView.setImageBitmap(bitmapForOverlay));
 
                         bgrMat.release();
 
+                        // If the C++ module decoded something, verify it.
                         if (decodedResult != null && !decodedResult.isEmpty()) {
-                            isDecoding = true; // Set flag to stop further processing
-
-                            // Create a result Intent to send the data back
-                            Intent resultIntent = new Intent();
-                            resultIntent.putExtra("DECODED_TEXT", decodedResult);
-                            setResult(RESULT_OK, resultIntent);
-                            finish(); // Close this activity and return to CompassActivity
-                            }
+                            isProcessing = true; // Stop the analyzer from processing more frames
+                            verifyQRCode(decodedResult);
+                        }
                     }
                     image.close();
                 });

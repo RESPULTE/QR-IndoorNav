@@ -19,7 +19,7 @@ public class StepDetector {
     private final OnStepListener listener;
 
     // --- UNIFIED CONFIGURATION CONSTANTS ---
-    public static final double AVERAGE_STEP_LENGTH_METERS = 5; // The estimated distance of one step in meters
+    public static final double AVERAGE_STEP_LENGTH_METERS = 10; // The estimated distance of one step in meters
     private static final float DEFAULT_USER_HEIGHT_CM = 175.0f; // Default height for initial calibration
     private static final long STEP_TIME_GATE_MS = 300; // Minimum time between steps to filter out shaking
     private static final int MOVEMENT_DIRECTION_MARGIN_DEGREES = 45; // Max allowed deviation (degrees) for a step to be considered "forward"

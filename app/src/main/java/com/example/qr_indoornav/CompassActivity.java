@@ -1,6 +1,7 @@
 package com.example.qr_indoornav;
 
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog; // Use androidx.appcompat.app.AlertDialog for consistency
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 
@@ -21,12 +22,10 @@ import com.example.qr_indoornav.model.Edge;
 import com.example.qr_indoornav.model.Graph;
 import com.example.qr_indoornav.model.Location;
 import com.example.qr_indoornav.model.MapData;
+import com.example.qr_indoornav.QRParser; // Import the parser
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.switchmaterial.SwitchMaterial;
-
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -59,40 +58,45 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
 
     // --- DYNAMIC NAVIGATION STATE ---
     private Graph graph;
-    private ArrayList<String> pathNodeIds;
-    private List<Location> fullPathLocations; // For the TimelineView
-    private int currentLegIndex = 0; // Current index in pathNodeIds (start node of current leg)
+    private ArrayList<String> pathNodeIds; // List of junction IDs to traverse
+    private List<Location> fullPathLocations; // Full list of Location objects for the TimelineView
+    private int currentLegIndex = 0; // Index of the STARTING node for the current leg in pathNodeIds
 
     // --- Variables for the CURRENT leg of the journey ---
-    private float targetDegree;
-    private int distanceForLegMeters;
-    private int stepsTakenInLeg = 0; // Steps taken for the current leg. Persists between ProgressActivity launches.
-    private static final int DEGREE_MARGIN_OF_ERROR = 5;
+    private float targetDegree; // Compass direction for the current leg
+    private int distanceForLegMeters; // Distance for the current leg
+    private int stepsTakenInLeg = 0; // Steps accumulated for the current leg (persists between ProgressActivity launches)
+    private static final int DEGREE_MARGIN_OF_ERROR = 5; // Tolerance for compass alignment
+
+    private String finalDestinationId; // The absolute final destination (room ID or junction ID)
 
     private final Handler navigationHandler = new Handler();
     private Runnable navigationRunnable;
+
+    private Edge lastEdge;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_compass);
 
-        // Load map data and path from the Intent
+        // Load map data and path information passed from NavigationActivity
         graph = MapData.getGraph(this);
         pathNodeIds = getIntent().getStringArrayListExtra("PATH_NODE_IDS");
-        String finalDestinationId = getIntent().getStringExtra("FINAL_DESTINATION_ID");
+        finalDestinationId = getIntent().getStringExtra("FINAL_DESTINATION_ID"); // Store the true final destination
 
         initializeUI();
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         setupNavigationRunnable();
 
+        // Basic validation for the received path
         if (pathNodeIds == null || pathNodeIds.size() < 2 || finalDestinationId == null) {
-            Toast.makeText(this, "Invalid path received.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Invalid navigation path received.", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
 
-        // Build the full visual timeline based on the entire planned path
+        // Build the full visual timeline based on the entire planned path (junctions + final room)
         buildFullPathLocations(finalDestinationId);
 
         // Load data for the first leg of the journey immediately
@@ -105,7 +109,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         currentTextView = findViewById(R.id.currentTextView);
         instructionTextView = findViewById(R.id.instructionTextView);
         compassBackgroundCard = findViewById(R.id.compassBackgroundCard);
-        timelineView = findViewById(R.id.timelineView); // Initialize the TimelineView
+        timelineView = findViewById(R.id.timelineView);
         SwitchMaterial audioSwitch = findViewById(R.id.audioSwitch);
         MaterialToolbar toolbar = findViewById(R.id.toolbar);
 
@@ -120,59 +124,66 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
      * Constructs the master list of all stops (junctions and final room) for the timeline display.
      */
     private void buildFullPathLocations(String finalDestinationId) {
+        // Convert the list of junction IDs into a list of Location objects for the timeline
         fullPathLocations = pathNodeIds.stream()
                 .map(nodeId -> MapData.getLocationById(this, nodeId))
                 .collect(Collectors.toList());
 
         Location finalDestLocation = MapData.getLocationById(this, finalDestinationId);
-        boolean isRoom = finalDestLocation != null && !finalDestLocation.id.equals(finalDestLocation.parentJunctionId);
+        fullPathLocations.add(finalDestLocation);
 
-        if (isRoom) {
-            fullPathLocations.add(finalDestLocation);
-        }
+        lastEdge = graph.getNode(finalDestLocation.parentJunctionId).edges.get(pathNodeIds.get(pathNodeIds.size()-1));
+
+        // removing the node: this is shit programing lol
+        fullPathLocations.remove(fullPathLocations.size() - 2);
+
     }
 
     /**
      * Loads the direction and distance for the current segment of the path and updates the UI.
-     * This is called on initial load and after each successful QR scan.
+     * This is called on initial launch and after each successful QR scan.
      */
     private void loadCurrentLegData() {
-        // Check if the entire journey is complete
-        if (currentLegIndex >= pathNodeIds.size() - 1) {
+        // Check if the entire journey is complete (currentLegIndex has advanced past the last junction)
+        if (currentLegIndex >= fullPathLocations.size() - 1) {
             currentState = AlignmentState.FINISHED;
             instructionTextView.setText("You have arrived at your destination!");
             targetTextView.setText("Target: Complete");
-            arrowImageView.setRotation(0); // Point arrow straight up for "finished"
+            arrowImageView.setRotation(0); // Point arrow straight up for "finished" state
             compassBackgroundCard.setCardBackgroundColor(ContextCompat.getColor(this, R.color.compass_bg_target_reached));
             sensorManager.unregisterListener(this); // Stop all sensor listening
-            updateTimeline(); // Final update to show the user at the end
+            updateTimeline(); // Final update to show the user at the very end of the timeline
             return;
         }
 
-        String fromNodeId = pathNodeIds.get(currentLegIndex);
-        String toNodeId = pathNodeIds.get(currentLegIndex + 1);
+        String fromNodeId = fullPathLocations.get(currentLegIndex).id;
+        String toNodeId = fullPathLocations.get(currentLegIndex + 1).id;
         Edge currentEdge = graph.getNode(fromNodeId).edges.get(toNodeId);
 
+        // last edge
         if (currentEdge == null) {
-            Toast.makeText(this, "Error: Path data is inconsistent for leg " + fromNodeId + "->" + toNodeId, Toast.LENGTH_LONG).show();
-            finish();
-            return;
+            // Set the dynamic targets for the current leg
+            targetDegree = lastEdge.directionDegrees;
+            distanceForLegMeters = lastEdge.distanceMeters;
+            stepsTakenInLeg = 0; // Reset steps for the NEW leg when it's initially loaded
+        }
+        else {
+            // Set the dynamic targets for the current leg
+            targetDegree = currentEdge.directionDegrees;
+            distanceForLegMeters = currentEdge.distanceMeters;
+            stepsTakenInLeg = 0; // Reset steps for the NEW leg when it's initially loaded
         }
 
-        // Set the dynamic targets for the current leg
-        targetDegree = currentEdge.directionDegrees;
-        distanceForLegMeters = currentEdge.distanceMeters;
-        stepsTakenInLeg = 0; // Reset steps for the NEW leg when it's loaded
 
-        // Update UI and reset alignment state for the new leg
+        // Update UI elements for the new leg
         updateTargetText();
         updateTimeline(); // Update timeline to show the new 'currentLegIndex'
-        currentState = AlignmentState.ALIGNING;
+        currentState = AlignmentState.ALIGNING; // Reset state to alignment for the new leg
         instructionTextView.setText("Align for next checkpoint");
     }
 
     /**
-     * Sets up the runnable that will launch ProgressActivity after 2 seconds of alignment.
+     * Sets up the runnable that will launch ProgressActivity after 2 seconds of sustained alignment.
      */
     private void setupNavigationRunnable() {
         navigationRunnable = () -> {
@@ -189,7 +200,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
     }
 
     /**
-     * Handles results from other activities (ProgressActivity or QRScannerActivity).
+     * Handles results returned from other activities (ProgressActivity or QRScannerActivity).
      */
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
@@ -200,57 +211,135 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
             if (data != null) {
                 // IMPORTANT: Always update stepsTakenInLeg, regardless of OK or CANCELED result.
                 // This preserves progress if the user deviated or backed out.
-                stepsTakenInLeg = data.getIntExtra("EXTRA_STEPS_TAKEN", 0);
+                stepsTakenInLeg = data.getIntExtra("EXTRA_STEPS_TAKEN", stepsTakenInLeg);
             }
 
             if (resultCode == RESULT_OK) {
                 // User successfully completed the walking part of the leg.
                 // Now, they need to scan the QR code to confirm arrival.
-                Intent scannerIntent = new Intent(this, QRScannerActivity.class);
-                startActivityForResult(scannerIntent, QR_SCANNER_REQUEST_CODE);
-            } else { // resultCode == RESULT_CANCELED (deviation or back press)
-                // User deviated or cancelled. Prompt to re-align and continue.
+                launchQrScanner();
+            } else { // resultCode == RESULT_CANCELED (user deviated or pressed back)
+                // User deviated or cancelled. Prompt to re-align and continue from saved progress.
                 Toast.makeText(this, "Navigation paused. Re-align to resume walking.", Toast.LENGTH_SHORT).show();
-                // We reload the current leg's data, which uses the saved `stepsTakenInLeg` to resume.
-                loadCurrentLegData();
+                // The `stepsTakenInLeg` is already updated from the result, so `loadCurrentLegData`
+                // will set up the compass for the same leg with the preserved progress.
+                loadCurrentLegData(); // Re-load UI for current leg to show updated steps (if any)
             }
         } else if (requestCode == QR_SCANNER_REQUEST_CODE) {
             // This block is executed when returning from QRScannerActivity
             if (resultCode == RESULT_OK && data != null) {
                 String decodedJson = data.getStringExtra("DECODED_TEXT");
-                String scannedJunctionId = parseJunctionIdFromQrJson(decodedJson);
-                String expectedJunctionId = pathNodeIds.get(currentLegIndex + 1);
-
-                if (scannedJunctionId != null && scannedJunctionId.equals(expectedJunctionId)) {
-                    // SUCCESS! The user has successfully confirmed their arrival at the correct junction.
-                    Toast.makeText(this, "Correct junction scanned: " + scannedJunctionId, Toast.LENGTH_SHORT).show();
-                    currentLegIndex++; // Advance to the next leg
-                    loadCurrentLegData(); // Load the new leg's data and reset steps
-                } else {
-                    // Scanned wrong QR code.
-                    Toast.makeText(this, "Wrong QR Code! Expected " + expectedJunctionId + ", but scanned " + scannedJunctionId, Toast.LENGTH_LONG).show();
-                    // User stays on the current leg. They need to scan the correct code.
-                }
-            } else { // resultCode == RESULT_CANCELED or no data
-                // User cancelled QR scan or it failed.
-                Toast.makeText(this, "QR scan cancelled. Please scan the correct code to continue.", Toast.LENGTH_SHORT).show();
+                // Process and verify the scanned QR code
+                verifyScanAndUpdateJourney(decodedJson);
+            } else { // resultCode == RESULT_CANCELED or no data (user cancelled QR scan)
+                Toast.makeText(this, "QR scan cancelled. Please scan again to continue.", Toast.LENGTH_SHORT).show();
+                // User remains at the current leg. No change to currentLegIndex.
             }
         }
     }
 
     /**
-     * Helper method to parse the junction ID from the QR code's JSON string.
+     * Launches the QR scanner activity.
      */
-    private String parseJunctionIdFromQrJson(String jsonString) {
-        if (jsonString == null || jsonString.isEmpty()) return "Unknown";
-        try {
-            JSONObject json = new JSONObject(jsonString);
-            // Assumes the QR code JSON contains a "paths" array and the first path's "from" node is the current junction ID.
-            return json.getJSONArray("paths").getJSONObject(0).getString("path").split("-")[0];
-        } catch (JSONException e) {
-            Log.e(TAG, "Failed to parse QR JSON for junction ID", e);
-            return "Invalid QR";
+    private void launchQrScanner() {
+        Intent scannerIntent = new Intent(this, QRScannerActivity.class);
+
+        // Determine the ID of the very next expected stop.
+        // This logic is already present in verifyScanAndUpdateJourney, so we can reuse/adapt it.
+        String expectedNextNodeId;
+        boolean isFinalLeg = (currentLegIndex + 1) >= (fullPathLocations.size() - 1);
+
+        if (isFinalLeg) {
+            expectedNextNodeId = finalDestinationId;
+        } else {
+            expectedNextNodeId = fullPathLocations.get(currentLegIndex + 1).id;
         }
+
+        scannerIntent.putExtra("EXPECTED_NODE_ID", expectedNextNodeId); // <--- ADD THIS LINE
+        scannerIntent.putExtra("REMAINING_LEGS", (fullPathLocations.size() - 1) - currentLegIndex - (isFinalLeg ? 0 : 1)); // <--- ADD THIS LINE for dialog message
+
+        startActivityForResult(scannerIntent, QR_SCANNER_REQUEST_CODE);
+    }
+
+    /**
+     * Verifies the decoded QR text against the expected node ID and manages journey progression.
+     */
+    private void verifyScanAndUpdateJourney(String decodedJson) {
+        QRParser.ScannedQRData scannedData = QRParser.parse(decodedJson);
+        String expectedNextNodeId;
+
+        // Determine the ID of the very next expected stop.
+        // If this is the last leg of the journey, the expected stop is the final destination (which could be a room).
+        boolean isFinalLeg = (currentLegIndex + 1) >= (fullPathLocations.size() - 1); // Check if the *next* node in pathNodeIds is the last
+
+        if (isFinalLeg) {
+            expectedNextNodeId = finalDestinationId;
+        } else {
+            // Otherwise, the expected stop is the next junction in the pathNodeIds list.
+            expectedNextNodeId = fullPathLocations.get(currentLegIndex + 1).id;
+        }
+
+        Log.i("TAG", "expectedNextNodeId: " + expectedNextNodeId);
+
+        if (scannedData.type != QRParser.ScannedQRData.QRType.INVALID && scannedData.id.equals(expectedNextNodeId)) {
+            // --- SUCCESS: Scanned QR matches the expected next stop ---
+            Toast.makeText(this, "Correct Location: " + scannedData.id, Toast.LENGTH_SHORT).show();
+
+            // Check if this was the very final stop
+            if (scannedData.id.equals(finalDestinationId)) {
+                showSuccessDialog("You have arrived at your final destination: " + finalDestinationId + "!", true);
+            } else {
+                // User has confirmed arrival at an intermediate junction. Advance the leg.
+                currentLegIndex++; // Advance to the next leg
+                int remainingJunctions = (fullPathLocations.size() - 1) - currentLegIndex; // Count remaining junctions
+                String message = "You have arrived at " + expectedNextNodeId + ".\n" +
+                        remainingJunctions + " more junction(s) until your destination area.";
+                showSuccessDialog(message, false);
+            }
+        } else {
+            // --- FAILURE: Scanned QR does NOT match expected ID or is invalid ---
+            showErrorDialog(expectedNextNodeId, scannedData.id);
+        }
+    }
+
+    /**
+     * Shows a success dialog to the user and manages progression.
+     * @param message The message to display in the dialog.
+     * @param isFinished True if the entire journey is complete, false otherwise.
+     */
+    private void showSuccessDialog(String message, boolean isFinished) {
+        new AlertDialog.Builder(this)
+                .setTitle("Success!")
+                .setMessage(message)
+                .setCancelable(false) // User must interact with the dialog
+                .setPositiveButton("Proceed", (dialog, which) -> {
+                    if (isFinished) {
+                        finish(); // Finish CompassActivity, go back to MainActivity
+                    } else {
+                        loadCurrentLegData(); // Load the next leg's data and update UI
+                    }
+                })
+                .show();
+    }
+
+    /**
+     * Shows an error dialog if the scanned QR code is incorrect.
+     * Provides options to rescan or cancel (go back to alignment).
+     * @param expectedId The ID that was expected.
+     * @param scannedId The ID that was actually scanned.
+     */
+    private void showErrorDialog(String expectedId, String scannedId) {
+        new AlertDialog.Builder(this)
+                .setTitle("QR Code Mismatch")
+                .setMessage("Expected: " + expectedId + "\nScanned: " + scannedId + "\n\nPlease find the correct QR code and try again.")
+                .setCancelable(false)
+                .setPositiveButton("Rescan", (dialog, which) -> launchQrScanner()) // Option to immediately rescan
+                .setNegativeButton("Cancel", (dialog, which) -> {
+                    dialog.dismiss(); // Dismiss dialog
+                    // User remains at the current leg, returns to alignment phase.
+                    // onResume will set state to ALIGNING.
+                })
+                .show();
     }
 
     /**
@@ -261,6 +350,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
     protected void onResume() {
         super.onResume();
         if (currentState != AlignmentState.FINISHED) {
+            // Re-register sensor listeners
             Sensor accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
             if (accelerometer != null) {
                 sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI);
@@ -292,6 +382,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
     public void onSensorChanged(SensorEvent event) {
         if (currentState == AlignmentState.FINISHED) return; // No need to process if journey is over
 
+        // Ensure we have valid data from both sensors before attempting to calculate orientation
         if (event.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
             System.arraycopy(event.values, 0, accelerometerReading, 0, accelerometerReading.length);
         } else if (event.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD) {
@@ -304,14 +395,15 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
      * Calculates the device's current orientation and updates the compass arrow.
      */
     public void updateOrientationAngles() {
-        // Ensure we have data from both sensors before attempting to calculate orientation
+        // Ensure we have recent data from both sensors before attempting to calculate orientation
+        // (A simple check, more robust would be to check if data is fresh)
         if (accelerometerReading[0] == 0 && magnetometerReading[0] == 0) return;
 
-        float[] rotationAngles = new float[3]; // Placeholder for orientation output
+        float[] orientationAngles = new float[3];
         SensorManager.getRotationMatrix(rotationMatrix, null, accelerometerReading, magnetometerReading);
-        SensorManager.getOrientation(rotationMatrix, rotationAngles); // orientationAngles is reused, but local var for clarity
+        SensorManager.getOrientation(rotationMatrix, orientationAngles);
 
-        float azimuthInRadians = rotationAngles[0];
+        float azimuthInRadians = orientationAngles[0];
         float currentDegree = (float) Math.toDegrees(azimuthInRadians);
         if (currentDegree < 0) currentDegree += 360; // Normalize to 0-360
 
@@ -341,7 +433,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         } else {
             compassBackgroundCard.setCardBackgroundColor(ContextCompat.getColor(this, R.color.compass_bg_default));
             if (currentState == AlignmentState.WAITING_TO_NAVIGATE) {
-                // User moved off target during the waiting period, reset.
+                // User moved off target during the waiting period, reset alignment state.
                 currentState = AlignmentState.ALIGNING;
                 instructionTextView.setText("Align with the target direction");
                 navigationHandler.removeCallbacks(navigationRunnable); // Cancel the pending launch
