@@ -119,26 +119,38 @@ public class MapData {
 
     private static List<String> parseRooms(JSONArray roomsJsonArray) throws JSONException {
         List<String> roomIds = new ArrayList<>();
-        // Updated Regex to be more flexible with room prefixes
-        Pattern pattern = Pattern.compile("([A-Za-z]+)(\\d+)-[A-Za-z]*(\\d+)");
+        // Match "N008-N010" or "N1-N3" etc. (same prefix both sides)
+        Pattern rangePattern = Pattern.compile("([A-Za-z]+)(\\d+)-([A-Za-z]+)?(\\d+)");
 
         for (int i = 0; i < roomsJsonArray.length(); i++) {
-            String roomStr = roomsJsonArray.getString(i);
-            Matcher matcher = pattern.matcher(roomStr);
+            String roomStr = roomsJsonArray.getString(i).trim();
+            Matcher matcher = rangePattern.matcher(roomStr);
 
-            if (matcher.matches()) { // It's a range like "R100-R104" or "L201-L203"
-                String prefix = matcher.group(1);
+            if (matcher.matches()) {
+                String prefix1 = matcher.group(1);
                 int start = Integer.parseInt(matcher.group(2));
-                int end = Integer.parseInt(matcher.group(3));
-                for (int j = start; j <= end; j++) {
-                    roomIds.add(prefix + j);
+                String prefix2 = matcher.group(3) != null ? matcher.group(3) : prefix1; // fallback
+                int end = Integer.parseInt(matcher.group(4));
+
+                // Only expand if prefixes are the same
+                if (prefix1.equals(prefix2)) {
+                    for (int j = start; j <= end; j++) {
+                        // Preserve zero-padding width from original number
+                        String num = String.format("%0" + matcher.group(2).length() + "d", j);
+                        roomIds.add(prefix1 + num);
+                    }
+                } else {
+                    // Different prefix? Treat whole thing as single room
+                    roomIds.add(roomStr);
                 }
-            } else { // It's a single room like "C300"
+            } else {
+                // It's a single room like "C300"
                 roomIds.add(roomStr);
             }
         }
         return roomIds;
     }
+
 
     private static String loadJSONFromAsset(Context context, String fileName) throws IOException {
         InputStream is = context.getAssets().open(fileName);
