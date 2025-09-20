@@ -29,17 +29,19 @@ public class MapView extends View {
     private Paint edgePaint, pathPaint, textPaint;
     private final float nodeRadius = 30f;
     private final float roomMarkerRadius = 15f;
-    private final float viewPadding = 60f;
+    private final float viewPadding = 80f;
 
     // --- Dynamic Data ---
     private Graph graph;
     private Map<String, PointF> nodeCoordinates = new HashMap<>();
     private List<String> pathNodeIds = new ArrayList<>();
     private String startNodeId;
-
-    // --- Unified Destination Handling ---
-    private boolean destinationIsRoom = false;
     private String finalDestinationId;
+
+    // --- NEW: Booleans to track location types ---
+    private boolean startIsRoom = false;
+    private boolean destinationIsRoom = false;
+
 
     public MapView(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
@@ -48,12 +50,16 @@ public class MapView extends View {
 
     public void setData(Graph graph, List<String> pathIds, String destinationId) {
         this.graph = graph;
-        this.pathNodeIds = pathIds;
+        this.pathNodeIds = pathIds != null ? pathIds : new ArrayList<>();
         this.finalDestinationId = destinationId;
-        this.destinationIsRoom = !graph.getAllNodes().stream().anyMatch(n -> n.id.equals(destinationId));
+        this.destinationIsRoom = graph.getNode(destinationId) == null;
 
-        if (!pathIds.isEmpty()) {
-            this.startNodeId = pathIds.get(0);
+        if (!this.pathNodeIds.isEmpty()) {
+            this.startNodeId = this.pathNodeIds.get(0);
+            this.startIsRoom = graph.getNode(this.startNodeId) == null;
+        } else {
+            this.startNodeId = null;
+            this.startIsRoom = false;
         }
 
         if (getWidth() > 0) {
@@ -74,6 +80,7 @@ public class MapView extends View {
         edgePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         edgePaint.setColor(Color.BLACK);
         edgePaint.setStrokeWidth(8f);
+
         pathPaint = new Paint(edgePaint);
         pathPaint.setColor(Color.parseColor("#03A9F4")); // Light Blue
         pathPaint.setStrokeWidth(12f);
@@ -83,7 +90,86 @@ public class MapView extends View {
         textPaint.setTextAlign(Paint.Align.CENTER);
     }
 
-    // In MapView.java
+
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        calculateNodeCoordinates();
+    }
+
+    /**
+     * Helper method to get the screen coordinates for any ID, whether it's a junction or a room.
+     */
+    private PointF getCoordinatesForId(String id) {
+        if (nodeCoordinates.containsKey(id)) {
+            return nodeCoordinates.get(id);
+        }
+        return roomCoordinates.get(id); // Returns null if not found in either map
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+        if (graph == null || nodeCoordinates.isEmpty()) return;
+
+        // --- 1. Draw base map: all junctions, rooms, and edges ---
+        // Draw all edges first so they are underneath the nodes.
+        for (Node node : graph.getAllNodes()) {
+            for (Edge edge : node.edges.values()) {
+                if (node.id.compareTo(edge.toNodeId) < 0) {
+                    drawEdge(canvas, node.id, edge.toNodeId, edgePaint);
+                }
+            }
+        }
+
+        // --- 2. Draw the navigation path line ON TOP of the base map ---
+        if (pathNodeIds.size() > 1) {
+            for (int i = 0; i < pathNodeIds.size() - 1; i++) {
+                PointF startPoint = getCoordinatesForId(pathNodeIds.get(i));
+                PointF endPoint = getCoordinatesForId(pathNodeIds.get(i + 1));
+                if (startPoint != null && endPoint != null) {
+                    canvas.drawLine(startPoint.x, startPoint.y, endPoint.x, endPoint.y, pathPaint);
+                }
+            }
+        }
+
+        // Draw all junctions, coloring path junctions blue.
+        for (String nodeId : nodeCoordinates.keySet()) {
+            Paint currentPaint = pathNodeIds.contains(nodeId) ? pathNodePaint : nodePaint;
+            drawNode(canvas, nodeId, currentPaint);
+        }
+        // Draw all rooms with default gray paint.
+        for(Map.Entry<String, PointF> entry : roomCoordinates.entrySet()) {
+            canvas.drawCircle(entry.getValue().x, entry.getValue().y, roomMarkerRadius, nodePaint);
+        }
+
+        // --- 3. Draw start and end markers ON TOP of everything else ---
+        // This ensures they are always visible and correctly colored.
+        if (startNodeId != null) {
+            PointF startPos = getCoordinatesForId(startNodeId);
+            if (startPos != null) {
+                if (startIsRoom) {
+                    canvas.drawCircle(startPos.x, startPos.y, roomMarkerRadius, startNodePaint);
+                    canvas.drawText(startNodeId, startPos.x, startPos.y - roomMarkerRadius - 15, textPaint);
+                } else { // It's a junction
+                    drawNode(canvas, startNodeId, startNodePaint);
+                }
+            }
+        }
+
+        if (finalDestinationId != null) {
+            PointF endPos = getCoordinatesForId(finalDestinationId);
+            if (endPos != null) {
+                if (destinationIsRoom) {
+                    canvas.drawCircle(endPos.x, endPos.y, roomMarkerRadius, endNodePaint);
+                    canvas.drawText(finalDestinationId, endPos.x, endPos.y - roomMarkerRadius - 15, textPaint);
+                } else { // It's a junction
+                    drawNode(canvas, finalDestinationId, endNodePaint);
+                }
+            }
+        }
+    }
 
     private void calculateNodeCoordinates() {
         if (graph == null || graph.getAllNodes().isEmpty() || getWidth() == 0) {
@@ -188,75 +274,7 @@ public class MapView extends View {
         }
     }
 
-    @Override
-    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-        super.onSizeChanged(w, h, oldw, oldh);
-        calculateNodeCoordinates();
-    }
-
-    @Override
-    protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas);
-        if (graph == null || nodeCoordinates.isEmpty()) return;
-
-        // --- 1. Draw ALL Edges (Junction to Junction) ---
-        for (Node node : graph.getAllNodes()) {
-            for (Edge edge : node.edges.values()) {
-                // To avoid drawing edges twice in an undirected graph representation
-                if (node.id.compareTo(edge.toNodeId) < 0) {
-                    drawEdge(canvas, node.id, edge.toNodeId, edgePaint);
-                }
-            }
-        }
-
-        // --- 2. Draw the Calculated Path ---
-        if (pathNodeIds != null && pathNodeIds.size() > 1) {
-            for (int i = 0; i < pathNodeIds.size() - 1; i++) {
-                drawEdge(canvas, pathNodeIds.get(i), pathNodeIds.get(i + 1), pathPaint);
-            }
-        }
-        // Special case: Draw partial path line to the destination room
-        if (destinationIsRoom && finalDestinationId != null && pathNodeIds.size() >= 1) {
-            PointF finalJunctionPos = nodeCoordinates.get(pathNodeIds.get(pathNodeIds.size() - 1));
-            PointF destRoomPos = roomCoordinates.get(finalDestinationId);
-            if (finalJunctionPos != null && destRoomPos != null) {
-                canvas.drawLine(finalJunctionPos.x, finalJunctionPos.y, destRoomPos.x, destRoomPos.y, pathPaint);
-            }
-        }
-
-
-        // --- 3. Draw the Junction Nodes ---
-        for (String nodeId : nodeCoordinates.keySet()) {
-            Paint currentPaint = nodePaint; // Default to gray
-            if (nodeId.equals(startNodeId)) {
-                currentPaint = startNodePaint; // Origin
-            } else if (pathNodeIds.contains(nodeId)) {
-                currentPaint = pathNodePaint; // Traversed path node
-            }
-            if (!destinationIsRoom && nodeId.equals(finalDestinationId)) {
-                currentPaint = endNodePaint; // Destination Junction
-            }
-            drawNode(canvas, nodeId, currentPaint);
-        }
-
-        // --- 4. Draw All Room Markers ---
-        for(Map.Entry<String, PointF> entry : roomCoordinates.entrySet()) {
-            String roomId = entry.getKey();
-            PointF pos = entry.getValue();
-
-            Paint roomPaint = nodePaint; // Default gray
-            // If this room is the final destination, color it green
-            if(roomId.equals(finalDestinationId)) {
-                roomPaint = endNodePaint;
-            }
-
-            canvas.drawCircle(pos.x, pos.y, roomMarkerRadius, roomPaint);
-            // Optionally draw room text, might get cluttered
-            // canvas.drawText(roomId, pos.x, pos.y - roomMarkerRadius - 10, textPaint);
-        }
-    }
-
-    // --- drawEdge() and drawNode() are UNCHANGED ---
+    // --- Drawing helper methods (Unchanged) ---
     private void drawEdge(Canvas canvas, String fromId, String toId, Paint paint) {
         PointF start = nodeCoordinates.get(fromId);
         PointF end = nodeCoordinates.get(toId);
