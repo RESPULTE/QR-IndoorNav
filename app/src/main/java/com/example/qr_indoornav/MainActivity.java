@@ -147,6 +147,8 @@ public class MainActivity extends AppCompatActivity {
                         recognizedTextView.setText("Press and hold the mic to speak");
                     }
                 }, 3000);
+
+                speak("what the fuck u say.");
             }
 
             @Override
@@ -291,12 +293,6 @@ public class MainActivity extends AppCompatActivity {
             autoCompleteTextView.setText(matchedLocation.displayName, false); // Update text without filtering
             autoCompleteTextView.clearFocus();
             speak("Found location: " + matchedLocation.displayName);
-        } else if (potentialMatches.size() > 1) {
-            speak("I found multiple locations. Please be more specific.");
-            Toast.makeText(this, "Multiple matches found. Please clarify.", Toast.LENGTH_LONG).show();
-        } else {
-            speak("Sorry, I could not find that location. Please try again.");
-            Toast.makeText(this, "No matching destination found.", Toast.LENGTH_SHORT).show();
         }
     }
 
