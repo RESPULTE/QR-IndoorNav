@@ -41,7 +41,6 @@ public class MapData {
      * @param qrString The complete string data from any scanned QR code.
      *                 Example: "JN3A|AB,54,290,H-J|AF,5,245|..."
      */
-
     public static void loadMapFromQRString(String qrString) {
         reset();
 
@@ -61,7 +60,6 @@ public class MapData {
             Log.i(TAG, "Scanned Location ID from header: " + scannedLocationId);
 
             Set<String> junctionIds = new HashSet<>();
-            // NEW: We discover all rooms but don't treat them as nodes in the graph
             Set<String> allDiscoveredRoomIds = new HashSet<>();
 
             // --- Step 2 (Pass 1): Discover ALL junction nodes and prepare edge data ---
@@ -73,11 +71,9 @@ public class MapData {
                 String nodeChars = details[0]; // "AB" from "AB,54,290,H-J"
                 if(nodeChars.length() < 2) continue;
 
-                // Discover and store junction IDs
                 junctionIds.add(charToJunctionId(nodeChars.charAt(0)));
                 junctionIds.add(charToJunctionId(nodeChars.charAt(1)));
 
-                // NEW: Discover room IDs to create Location objects later
                 if (details.length > 3) {
                     allDiscoveredRoomIds.addAll(parseRoomRange(details[3]));
                 }
@@ -108,10 +104,7 @@ public class MapData {
                     roomIdsOnPath = parseRoomRange(details[3]);
                 }
 
-                // Create ONE forward edge with the list of rooms
                 graphInstance.getNode(fromJunctionId).addEdge(toJunctionId, totalDistance, direction, roomIdsOnPath);
-
-                // Create ONE reverse edge with the list of rooms in reverse order
                 float reverseDirection = (direction + 180) % 360;
                 List<String> reverseRoomIds = new ArrayList<>(roomIdsOnPath);
                 Collections.reverse(reverseRoomIds);
@@ -121,16 +114,11 @@ public class MapData {
 
 
             // --- Step 5 (Pass 3): Create Location objects for ALL junctions and rooms ---
-            // Create locations for junctions
             for (Node node : graphInstance.getAllNodes()) {
                 Location location = new Location(node.id, "Junction " + node.id, node.id);
                 locationMap.put(node.id, location);
             }
-            // Create locations for all discovered rooms
             for (String roomId : allDiscoveredRoomIds) {
-                // A room's location points to the nearest junction, we need pathfinding to determine this.
-                // For the dropdown list, we can just use its own ID for now.
-                // A more advanced implementation might associate a room with an edge.
                 Location location = new Location(roomId, "Room " + roomId, roomId);
                 locationMap.put(roomId, location);
             }
@@ -142,15 +130,11 @@ public class MapData {
 
         } catch (Exception e) {
             Log.e(TAG, "CRITICAL ERROR: Failed to parse QR string map data.", e);
-            reset(); // Clear any partially loaded data to prevent app instability
+            reset();
             throw new RuntimeException("Failed to load map from QR string. See Logcat.", e);
         }
     }
 
-    /**
-     * Parses the header to set the global ID prefix, number of digits, and the scanned location ID.
-     * @param header e.g., "JN3A" or "RN3H"
-     */
     private static void parseHeader(String header) {
         if (header == null || header.length() < 4) {
             throw new IllegalArgumentException("Header is malformed.");
@@ -160,7 +144,6 @@ public class MapData {
         idNumDigits = Integer.parseInt(header.substring(2, 3)); // 3
         char locationChar = header.charAt(3); // 'A' or 'H' etc.
 
-        // Generate the scanned location ID based on its type
         if (typeChar == 'J') {
             scannedLocationId = charToJunctionId(locationChar);
         } else if (typeChar == 'R') {
@@ -170,10 +153,6 @@ public class MapData {
         }
     }
 
-    /**
-     * Converts a character to a JUNCTION ID (e.g., 'A' -> "N1", 'B' -> "N2").
-     * Uses no zero-padding.
-     */
     private static String charToJunctionId(char c) {
         if (idPrefix == null) {
             throw new IllegalStateException("Header must be parsed before converting chars to IDs.");
@@ -182,10 +161,6 @@ public class MapData {
         return idPrefix + numericValue;
     }
 
-    /**
-     * Converts a character to a ROOM ID (e.g., 'H' -> "N008").
-     * Uses the zero-padding specified in the header.
-     */
     private static String charToRoomId(char c) {
         if (idPrefix == null || idNumDigits == 0) {
             throw new IllegalStateException("Header must be parsed before converting chars to IDs.");
@@ -195,12 +170,6 @@ public class MapData {
         return idPrefix + String.format(formatString, numericValue);
     }
 
-
-    /**
-     * Parses a room range string (e.g., "H-J") into a list of full room IDs.
-     * @param rangeStr e.g., "H-J"
-     * @return List of strings, e.g., ["N008", "N009", "N010"]
-     */
     private static List<String> parseRoomRange(String rangeStr) {
         List<String> roomIds = new ArrayList<>();
         String[] range = rangeStr.split("-");
@@ -221,6 +190,29 @@ public class MapData {
         if (graphInstance == null) {
             throw new IllegalStateException("MapData has not been loaded. Call loadMapFromQRString() first.");
         }
+    }
+
+    /**
+     * Finds one of the two junctions an edge belongs to.
+     * This is used to determine a valid starting node for pathfinding when the user scans a room QR.
+     * @param roomId The ID of the room to search for.
+     * @return The ID of the "from" junction of the edge containing the room, or null if not found.
+     */
+    public static String findJunctionForRoom(String roomId) {
+        checkLoaded();
+        if (roomId == null) return null;
+
+        for (Node junction : graphInstance.getAllNodes()) {
+            for (Edge edge : junction.edges.values()) {
+                // Assumes Edge class has a public `roomIds` list.
+                if (edge.roomIds.contains(roomId)) {
+                    // Found the edge. Return the 'from' junction of this edge.
+                    // This is a simple, deterministic way to get a valid starting node.
+                    return junction.id;
+                }
+            }
+        }
+        return null; // Room not found on any edge
     }
 
     public static String getScannedLocationId() {

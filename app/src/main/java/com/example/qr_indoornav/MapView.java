@@ -83,23 +83,34 @@ public class MapView extends View {
         textPaint.setTextAlign(Paint.Align.CENTER);
     }
 
+    // In MapView.java
+
     private void calculateNodeCoordinates() {
         if (graph == null || graph.getAllNodes().isEmpty() || getWidth() == 0) {
             return;
         }
 
-        // --- Step 1: Calculate Relative Positions for JUNCTIONS ONLY using BFS ---
+        // --- Step 1: Calculate Relative Positions for JUNCTIONS using BFS ---
+        // The map layout must be consistent, regardless of the user's path.
+        // To achieve this, we always start the layout calculation from a fixed, deterministic node.
+        // Here, we choose the junction with the lexicographically smallest ID as the "root" of our map.
         Map<String, PointF> relativeCoords = new HashMap<>();
         Queue<String> queue = new ArrayDeque<>();
         Set<String> visited = new HashSet<>();
 
-        if (startNodeId == null) return;
-        Node startNode = graph.getNode(startNodeId);
-        if (startNode == null) return; // Ensure the start node is a junction
+        String layoutRootNodeId = graph.getAllNodes().stream()
+                .map(node -> node.id)
+                .min(String::compareTo)
+                .orElse(null);
 
-        queue.add(startNodeId);
-        visited.add(startNodeId);
-        relativeCoords.put(startNodeId, new PointF(0, 0));
+        // If for some reason no root node can be found, abort.
+        if (layoutRootNodeId == null) {
+            return;
+        }
+
+        queue.add(layoutRootNodeId);
+        visited.add(layoutRootNodeId);
+        relativeCoords.put(layoutRootNodeId, new PointF(0, 0));
 
         while (!queue.isEmpty()) {
             String currentId = queue.poll();
@@ -150,10 +161,9 @@ public class MapView extends View {
 
         // --- Step 5: Calculate Screen Coordinates for ALL Rooms via Interpolation ---
         roomCoordinates.clear();
-        Set<String> drawnEdges = new HashSet<>(); // To avoid drawing rooms twice for bidirectional edges
+        Set<String> drawnEdges = new HashSet<>();
         for (Node junction : graph.getAllNodes()) {
             for (Edge edge : junction.getEdges().values()) {
-                // Create a unique key for the edge to handle bidirectional graph
                 String edgeKey = junction.id.compareTo(edge.toNodeId) < 0 ? junction.id + "-" + edge.toNodeId : edge.toNodeId + "-" + junction.id;
                 if (drawnEdges.contains(edgeKey) || edge.roomIds.isEmpty()) {
                     continue;
@@ -167,7 +177,6 @@ public class MapView extends View {
                     int totalRooms = edge.roomIds.size();
                     for (int i = 0; i < totalRooms; i++) {
                         String roomId = edge.roomIds.get(i);
-                        // Calculate position ratio. For 3 rooms, ratios are 1/4, 2/4, 3/4
                         float ratio = (float) (i + 1) / (totalRooms + 1);
 
                         float roomX = startPos.x + (endPos.x - startPos.x) * ratio;

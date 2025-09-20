@@ -18,7 +18,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "MainActivity";
     private AutoCompleteTextView autoCompleteTextView;
-    private String navigationOriginId; // The junction ID to start pathfinding from
+    // REPLACED navigationOriginId with the more accurate scannedLocationId
     private String scannedLocationId;  // The actual ID of the scanned QR (can be a room or junction)
 
     @Override
@@ -47,30 +47,25 @@ public class MainActivity extends AppCompatActivity {
 
         try {
             // Step 1: Load the entire map from the full QR string.
-            // This single call populates the graph, all locations, AND the scanned location ID.
             MapData.loadMapFromQRString(qrData);
 
             // Step 2: Get the starting location ID directly from the now-loaded MapData.
-            // MainActivity no longer needs to know how to parse the QR string.
             this.scannedLocationId = MapData.getScannedLocationId();
 
             if (this.scannedLocationId == null || this.scannedLocationId.isEmpty()) {
                 throw new IllegalStateException("MapData failed to extract a scanned location ID.");
             }
 
-            // Step 3: Get the full Location object for the scanned point.
+            // Step 3: Get the Location object for UI display purposes.
             Location scannedLocation = MapData.getLocationById(this.scannedLocationId);
-
             if (scannedLocation == null) {
                 throw new IllegalStateException("Scanned ID " + this.scannedLocationId + " not found in map data.");
             }
 
-            // Step 4: Determine the navigation origin. For a room, this is its parent junction.
-            // For a junction, it's the junction itself. This logic remains the same.
-            this.navigationOriginId = scannedLocation.parentJunctionId;
-
-            Log.i(TAG, "User scanned: " + scannedLocation.displayName +
-                    ". Navigation will start from junction: " + this.navigationOriginId);
+            // Step 4: Log the actual scanned location. The PathFinder will be responsible for
+            // handling the path calculation whether it's a room or a junction.
+            Log.i(TAG, "User's starting location confirmed as: " + scannedLocation.displayName +
+                    " (ID: " + this.scannedLocationId + ")");
 
             // Step 5: Now that all data is ready, set up the UI.
             setCurrentLocationOnUI();
@@ -78,7 +73,6 @@ public class MainActivity extends AppCompatActivity {
             setupClickListeners();
 
         } catch (Exception e) {
-            // This catch block now handles any failure during the MapData loading process.
             Log.e(TAG, "Failed to initialize MapData from QR string: " + qrData, e);
             Toast.makeText(this, "Error: Could not process map data from QR code.", Toast.LENGTH_LONG).show();
             finish();
@@ -86,21 +80,18 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setCurrentLocationOnUI() {
-        // This method now purely relies on MapData for its information.
         Location currentLocation = MapData.getLocationById(scannedLocationId);
         TextView currentLocationValue = findViewById(R.id.currentLocationValue);
 
         if (currentLocation != null) {
             currentLocationValue.setText(currentLocation.displayName);
         } else {
-            // This case should ideally not be reached due to the checks in handleScannedOrigin
             currentLocationValue.setText("Unknown Location");
             Log.e(TAG, "Could not find display name for scanned location ID: " + scannedLocationId);
         }
     }
 
     private void setupDropdown() {
-        // This method already correctly used MapData.
         List<Location> allLocations = MapData.getAllLocations();
 
         if (allLocations.isEmpty()) {
@@ -118,7 +109,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setupClickListeners() {
-        // This method already correctly used MapData.
         Button continueButton = findViewById(R.id.continueButton);
         continueButton.setOnClickListener(v -> {
             String selectedText = autoCompleteTextView.getText().toString();
@@ -131,15 +121,15 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            // Check if the destination is the same as the scanned location
             if (selectedLocation.id.equals(scannedLocationId)) {
                 Toast.makeText(this, "You are already at your destination.", Toast.LENGTH_SHORT).show();
                 return;
             }
 
             Intent intent = new Intent(MainActivity.this, NavigationActivity.class);
-            // Pass the NAVIGATION origin (the junction) for pathfinding.
-            intent.putExtra("USER_ORIGIN_ID", navigationOriginId);
+            // Pass the TRUE origin ID (which can be a room or a junction).
+            // The PathFinder will correctly interpret this ID to start navigation.
+            intent.putExtra("USER_ORIGIN_ID", scannedLocationId);
             intent.putExtra("USER_DESTINATION_ID", selectedLocation.id);
             startActivity(intent);
         });
