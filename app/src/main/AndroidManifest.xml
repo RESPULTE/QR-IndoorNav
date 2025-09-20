@@ -13,6 +13,7 @@
         android:required="true" /> <!-- ======================================================= -->
     <!-- Your existing uses-permission and uses-feature for sensors -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <uses-feature
         android:name="android.hardware.sensor.accelerometer"

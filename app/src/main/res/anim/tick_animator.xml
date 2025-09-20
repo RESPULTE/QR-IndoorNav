@@ -1,4 +1,4 @@
-<!-- res/animator/tick_animator.xml -->
+<!-- res/anim/tick_animator.xml -->
 <objectAnimator xmlns:android="http://schemas.android.com/apk/res/android"
     android:name="tick_animator"
     android:duration="800"

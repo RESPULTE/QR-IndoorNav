@@ -21,6 +21,8 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+
+
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/destinationMenu"
         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
@@ -78,7 +80,7 @@
         android:layout_height="wrap_content"
         android:contentDescription="@string/mic_button_content_description"
         android:src="@drawable/ic_mic"
-        app:backgroundTint="@color/mic_blue"
+        app:backgroundTint="@color/mic_button_default"
         app:fabCustomSize="80dp"
         app:layout_constraintBottom_toTopOf="@+id/continueButton"
         app:layout_constraintEnd_toEndOf="parent"

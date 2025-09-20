@@ -9,4 +9,7 @@
     <!-- Add these new colors for the compass -->
     <color name="compass_bg_default">#D6E6FF</color> <!-- A light blue -->
     <color name="compass_bg_target_reached">#C8E6C9</color> <!-- A light green -->
+
+    <color name="mic_button_default">#03A9F4</color> <!-- Light Blue -->
+    <color name="mic_button_listening">#01579B</color> <!-- Dark Blue -->
 </resources>
