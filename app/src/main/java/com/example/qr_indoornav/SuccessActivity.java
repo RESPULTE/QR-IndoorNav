@@ -26,6 +26,7 @@ public class SuccessActivity extends AppCompatActivity {
         if (drawable instanceof Animatable) {
             ((Animatable) drawable).start();
         }
+        TtsManager.speak("destination reached!");
 
         // Set a click listener on the entire screen
         rootLayout.setOnClickListener(v -> {

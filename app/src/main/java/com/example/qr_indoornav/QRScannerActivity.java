@@ -61,10 +61,6 @@ public class QRScannerActivity extends AppCompatActivity {
         overlayImageView = findViewById(R.id.overlayImageView);
         cameraExecutor = Executors.newSingleThreadExecutor();
 
-        // We don't need these extras anymore, as CompassActivity will handle all verification
-        // expectedNodeId = getIntent().getStringExtra("EXPECTED_NODE_ID");
-        // remainingLegs = getIntent().getIntExtra("REMAINING_LEGS", 0);
-
         if (!allPermissionsGranted()) {
             ActivityCompat.requestPermissions(
                     this, new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST_CODE);
