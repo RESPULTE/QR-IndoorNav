@@ -20,37 +20,61 @@ public class QRParser {
 
     /**
      * Parses a compact string from a QR code and identifies its type and ID.
+     * This method specifically parses the header of the new map data format to
+     * determine the type (Junction/Room) and ID of the scanned location.
      *
      * @param qrString The raw string decoded from the QR code.
+     *                 Example: "JN3A|AB,54,290,H-J|..."
      * @return A ScannedQRData object with the parsed information.
      */
     public static ScannedQRData parse(String qrString) {
-        if (qrString == null || qrString.isEmpty()) {
-            return new ScannedQRData(ScannedQRData.QRType.INVALID, "Empty");
+        if (qrString == null || qrString.isEmpty() || !qrString.contains("|")) {
+            return new ScannedQRData(ScannedQRData.QRType.INVALID, "Invalid or Empty Format");
         }
 
-        // Check for the new compact junction format.
-        // It must contain ":" and "-" and should not be a JSON string.
-        if (qrString.contains(":") && qrString.contains("-") && !qrString.trim().startsWith("{")) {
-            try {
-                // Example: "1-2:54,290,N008-N010;..."
-                // We only need the first path to identify the 'from' node of the junction.
-                String firstPathEntry = qrString.split(";")[0]; // "1-2:54,290,N008-N010"
-                String pathPart = firstPathEntry.split(":")[0];      // "1-2"
-                String fromNode = pathPart.split("-")[0];           // "1"
+        try {
+            // The header is the first part, before the first "|"
+            String header = qrString.substring(0, qrString.indexOf('|'));
 
-                // Reconstruct the full junction ID to match the app's internal format (e.g., "N1")
-                String junctionId = "N" + fromNode;
-                return new ScannedQRData(ScannedQRData.QRType.JUNCTION, junctionId);
-
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to parse compact QR string: " + qrString, e);
-                return new ScannedQRData(ScannedQRData.QRType.INVALID, "Parsing Error");
+            // Header format: <Type Char><Prefix Char><Num Digits><Location Char>
+            // Example: JN3A
+            if (header.length() < 4) {
+                return new ScannedQRData(ScannedQRData.QRType.INVALID, "Malformed Header");
             }
-        }
 
-        // If the format doesn't match, it's considered invalid in this new system.
-        // You could add logic here later to parse "Room" QR codes if needed.
-        return new ScannedQRData(ScannedQRData.QRType.INVALID, "Unknown Format");
+            // --- Extract information from the header ---
+            char typeChar = header.charAt(0);
+            String prefix = header.substring(1, 2);
+            int numDigits = Integer.parseInt(header.substring(2, 3));
+            char locationChar = header.charAt(3);
+
+            // --- Determine the type of the QR point ---
+            ScannedQRData.QRType type;
+            if (typeChar == 'J') {
+                type = ScannedQRData.QRType.JUNCTION;
+            } else if (typeChar == 'r') {
+                type = ScannedQRData.QRType.ROOM;
+            } else {
+                Log.w(TAG, "Unknown QR type character in header: " + typeChar);
+                return new ScannedQRData(ScannedQRData.QRType.INVALID, "Unknown Type");
+            }
+
+            // --- Generate the full ID string ---
+            // 'A' corresponds to 1, 'B' to 2, and so on.
+            int numericValue = locationChar - 'A' + 1;
+            // Pad the number with leading zeros based on numDigits
+            String formatString = "%0" + numDigits + "d";
+            String id = prefix + String.format(formatString, numericValue);
+
+            // Return the successfully parsed data
+            return new ScannedQRData(type, id);
+
+        } catch (NumberFormatException e) {
+            Log.e(TAG, "Failed to parse number of digits from header in QR string: " + qrString, e);
+            return new ScannedQRData(ScannedQRData.QRType.INVALID, "Header Digit Error");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to parse QR string: " + qrString, e);
+            return new ScannedQRData(ScannedQRData.QRType.INVALID, "Parsing Error");
+        }
     }
 }

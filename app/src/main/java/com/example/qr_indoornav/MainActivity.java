@@ -18,7 +18,8 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "MainActivity";
     private AutoCompleteTextView autoCompleteTextView;
-    private String currentJunctionId;
+    private String navigationOriginId; // The junction ID to start pathfinding from
+    private String scannedLocationId;  // The actual ID of the scanned QR (can be a room or junction)
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -35,57 +36,71 @@ public class MainActivity extends AppCompatActivity {
 
     private void handleScannedOrigin() {
         Intent intent = getIntent();
-        if (intent != null && intent.hasExtra(StartActivity.EXTRA_SCANNED_ORIGIN_DATA)) {
-            String qrData = intent.getStringExtra(StartActivity.EXTRA_SCANNED_ORIGIN_DATA);
-            QRParser.ScannedQRData parsedData = QRParser.parse(qrData);
-
-            if (parsedData.type == QRParser.ScannedQRData.QRType.JUNCTION) {
-                try {
-                    // --- MODIFIED SECTION START ---
-                    // Load the entire map using the full QR string
-                    MapData.loadMapFromQRString(qrData);
-
-                    // Set the user's current location using the ID from the parsed data
-                    MapData.setCurrentJunctionId(parsedData.id);
-                    this.currentJunctionId = MapData.getCurrentJunctionId();
-                    // --- MODIFIED SECTION END ---
-
-                    // Now that MapData is populated, set up the UI
-                    setCurrentLocationOnUI();
-                    setupDropdown();
-                    setupClickListeners();
-
-                } catch (Exception e) {
-                    Log.e(TAG, "Failed to initialize MapData from QR string.", e);
-                    Toast.makeText(this, "Error: Could not process map data from QR code.", Toast.LENGTH_LONG).show();
-                    finish();
-                }
-            } else {
-                Log.e(TAG, "Invalid starting QR scanned. Type: " + parsedData.type + ", Info: " + parsedData.id);
-                Toast.makeText(this, "Error: You must scan a valid junction QR code to start.", Toast.LENGTH_LONG).show();
-                finish();
-            }
-        } else {
+        if (intent == null || !intent.hasExtra(StartActivity.EXTRA_SCANNED_ORIGIN_DATA)) {
             Log.e(TAG, "MainActivity started without required origin QR data.");
             Toast.makeText(this, "Error: No starting location found.", Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+
+        String qrData = intent.getStringExtra(StartActivity.EXTRA_SCANNED_ORIGIN_DATA);
+
+        try {
+            // Step 1: Load the entire map from the full QR string.
+            // This single call populates the graph, all locations, AND the scanned location ID.
+            MapData.loadMapFromQRString(qrData);
+
+            // Step 2: Get the starting location ID directly from the now-loaded MapData.
+            // MainActivity no longer needs to know how to parse the QR string.
+            this.scannedLocationId = MapData.getScannedLocationId();
+
+            if (this.scannedLocationId == null || this.scannedLocationId.isEmpty()) {
+                throw new IllegalStateException("MapData failed to extract a scanned location ID.");
+            }
+
+            // Step 3: Get the full Location object for the scanned point.
+            Location scannedLocation = MapData.getLocationById(this.scannedLocationId);
+
+            if (scannedLocation == null) {
+                throw new IllegalStateException("Scanned ID " + this.scannedLocationId + " not found in map data.");
+            }
+
+            // Step 4: Determine the navigation origin. For a room, this is its parent junction.
+            // For a junction, it's the junction itself. This logic remains the same.
+            this.navigationOriginId = scannedLocation.parentJunctionId;
+
+            Log.i(TAG, "User scanned: " + scannedLocation.displayName +
+                    ". Navigation will start from junction: " + this.navigationOriginId);
+
+            // Step 5: Now that all data is ready, set up the UI.
+            setCurrentLocationOnUI();
+            setupDropdown();
+            setupClickListeners();
+
+        } catch (Exception e) {
+            // This catch block now handles any failure during the MapData loading process.
+            Log.e(TAG, "Failed to initialize MapData from QR string: " + qrData, e);
+            Toast.makeText(this, "Error: Could not process map data from QR code.", Toast.LENGTH_LONG).show();
             finish();
         }
     }
 
     private void setCurrentLocationOnUI() {
-        // Note: No 'context' parameter needed anymore
-        Location currentLocation = MapData.getLocationById(currentJunctionId);
+        // This method now purely relies on MapData for its information.
+        Location currentLocation = MapData.getLocationById(scannedLocationId);
         TextView currentLocationValue = findViewById(R.id.currentLocationValue);
+
         if (currentLocation != null) {
             currentLocationValue.setText(currentLocation.displayName);
         } else {
+            // This case should ideally not be reached due to the checks in handleScannedOrigin
             currentLocationValue.setText("Unknown Location");
-            Log.e(TAG, "Could not find display name for current junction ID: " + currentJunctionId);
+            Log.e(TAG, "Could not find display name for scanned location ID: " + scannedLocationId);
         }
     }
 
     private void setupDropdown() {
-        // Note: No 'context' parameter needed anymore
+        // This method already correctly used MapData.
         List<Location> allLocations = MapData.getAllLocations();
 
         if (allLocations.isEmpty()) {
@@ -103,10 +118,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setupClickListeners() {
+        // This method already correctly used MapData.
         Button continueButton = findViewById(R.id.continueButton);
         continueButton.setOnClickListener(v -> {
             String selectedText = autoCompleteTextView.getText().toString();
-            // Note: No 'context' parameter needed anymore
             Location selectedLocation = MapData.getAllLocations().stream()
                     .filter(loc -> loc.displayName.equals(selectedText))
                     .findFirst().orElse(null);
@@ -116,14 +131,15 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            if (selectedLocation.id.equals(currentJunctionId)) {
+            // Check if the destination is the same as the scanned location
+            if (selectedLocation.id.equals(scannedLocationId)) {
                 Toast.makeText(this, "You are already at your destination.", Toast.LENGTH_SHORT).show();
                 return;
             }
 
             Intent intent = new Intent(MainActivity.this, NavigationActivity.class);
-            // The rest of your app will now use the globally loaded MapData
-            intent.putExtra("USER_ORIGIN_ID", currentJunctionId);
+            // Pass the NAVIGATION origin (the junction) for pathfinding.
+            intent.putExtra("USER_ORIGIN_ID", navigationOriginId);
             intent.putExtra("USER_DESTINATION_ID", selectedLocation.id);
             startActivity(intent);
         });
