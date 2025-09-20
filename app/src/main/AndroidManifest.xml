@@ -8,12 +8,18 @@
  Declares that the app uses camera features. required="true" means
          the app won't be available on devices without a camera.
     -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
     <uses-feature
         android:name="android.hardware.camera"
         android:required="true" /> <!-- ======================================================= -->
     <!-- Your existing uses-permission and uses-feature for sensors -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.INTERNET"/>
 
     <uses-feature
         android:name="android.hardware.sensor.accelerometer"
