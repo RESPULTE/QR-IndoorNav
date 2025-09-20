@@ -46,7 +46,7 @@ public class StepDetector {
     private static final long OFF_DIRECTION_RESET_TIME_MS = 2000; // If 2 seconds pass without an off-direction step, the counter resets.
 
     // --- State Variables ---
-    public static double step_length_meter = 5; // The estimated distance of one step in meters
+    public static double AVERAGE_STEP_LENGTH_METERS = 5; // The estimated distance of one step in meters
 
     private float dynamicThreshold; // Accelerometer magnitude threshold, adjusted by height
     private long lastStepTime = 0; // Timestamp of the last detected valid step
@@ -241,7 +241,7 @@ public class StepDetector {
      * @return The total distance in meters.
      */
     public double getMetersCovered() {
-        return stepsTaken * step_length_meter;
+        return stepsTaken * AVERAGE_STEP_LENGTH_METERS;
     }
 
     /**
@@ -251,6 +251,6 @@ public class StepDetector {
      */
     public int getRemainingSteps(int totalDistanceMeters) {
         double metersRemaining = Math.max(0, totalDistanceMeters - getMetersCovered());
-        return (int) Math.ceil(metersRemaining / step_length_meter);
+        return (int) Math.ceil(metersRemaining / AVERAGE_STEP_LENGTH_METERS);
     }
 }
