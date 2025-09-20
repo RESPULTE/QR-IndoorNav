@@ -1,0 +1,18 @@
+<!-- res/drawable/ic_tick.xml -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="128dp"
+    android:height="128dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:name="tick_group">
+        <path
+            android:name="tick_path"
+            android:pathData="M5,12 l5,5 l9,-9"
+            android:strokeWidth="2"
+            android:strokeColor="#4CAF50"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:trimPathEnd="0"/>
+    </group>
+</vector>

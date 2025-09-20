@@ -124,6 +124,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
     private void loadCurrentLegData() {
         // Check if the journey is complete
         if (currentLegIndex >= pathLegs.size()) {
+            // This state is now only a fallback, the main "finished" logic is in verifyScanAndUpdateJourney
             currentState = AlignmentState.FINISHED;
             instructionTextView.setText(R.string.destination_reached);
             targetTextView.setText(R.string.target_complete);
@@ -186,12 +187,20 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
             currentLegIndex++; // Advance to the next leg
 
             if (scannedData.id.equals(finalDestinationId)) {
-                showSuccessDialog("You have arrived at your final destination: " + finalDestinationId + "!", true);
+                // --- MODIFIED: LAUNCH SUCCESS ACTIVITY INSTEAD OF DIALOG ---
+                // Destination reached! Launch the success screen.
+                Intent intent = new Intent(this, SuccessActivity.class);
+                startActivity(intent);
+                finish(); // Close this compass activity
+                return;   // Exit the method
+                // --- END MODIFICATION ---
+
             } else {
                 int remainingStops = pathLegs.size() - currentLegIndex;
                 String message = "You have arrived at " + expectedNextNodeId + ".\n" +
                         remainingStops + " more stop(s) to go.";
-                showSuccessDialog(message, false);
+                // --- MODIFIED: Call the simplified dialog method ---
+                showSuccessDialog(message);
             }
         } else {
             // FAILURE: Scanned QR does not match.
@@ -214,9 +223,6 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         };
     }
 
-    // --- The rest of the file (sensor handling, UI updates, dialogs) is functionally unchanged, ---
-    // --- but simplified as it relies on the pre-calculated data. ---
-
     private void launchQrScanner() {
         Intent scannerIntent = new Intent(this, QRScannerActivity.class);
         String expectedNextNodeId = pathLegs.get(currentLegIndex).toId;
@@ -226,21 +232,19 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         startActivityForResult(scannerIntent, QR_SCANNER_REQUEST_CODE);
     }
 
-    private void showSuccessDialog(String message, boolean isFinished) {
+    // --- MODIFIED: SIMPLIFIED DIALOG FOR INTERMEDIATE CHECKPOINTS ---
+    private void showSuccessDialog(String message) {
         new AlertDialog.Builder(this)
                 .setTitle("Checkpoint Reached!")
                 .setMessage(message)
                 .setCancelable(false)
                 .setPositiveButton("Proceed", (dialog, which) -> {
-                    if (isFinished) {
-                        loadCurrentLegData(); // Load final "arrived" state
-                    } else {
-                        stepsTakenInLeg = 0; // Reset for new leg
-                        loadCurrentLegData(); // Load next leg's data
-                    }
+                    stepsTakenInLeg = 0; // Reset for new leg
+                    loadCurrentLegData(); // Load next leg's data
                 })
                 .show();
     }
+    // --- END MODIFICATION ---
 
     private void showErrorDialog(String expectedId, String scannedId) {
         new AlertDialog.Builder(this)

@@ -10,7 +10,7 @@ import android.os.Bundle;
 import android.widget.ImageButton;
 import android.widget.Toast;
 
-public class StartActivity extends AppCompatActivity {
+public class InitialActivity extends AppCompatActivity {
 
     // Define a key for passing the scanned data to MainActivity.
     // Using a constant is good practice to avoid typos.
@@ -28,7 +28,7 @@ public class StartActivity extends AppCompatActivity {
                         String qrData = data.getStringExtra("DECODED_TEXT");
 
                         // Now, start MainActivity and pass this initial location data to it.
-                        Intent mainActivityIntent = new Intent(StartActivity.this, MainActivity.class);
+                        Intent mainActivityIntent = new Intent(InitialActivity.this, MainActivity.class);
                         mainActivityIntent.putExtra(EXTRA_SCANNED_ORIGIN_DATA, qrData);
                         startActivity(mainActivityIntent);
 
@@ -55,7 +55,7 @@ public class StartActivity extends AppCompatActivity {
         playButton.setOnClickListener(v -> {
             // When the play button is clicked, launch the QRScannerActivity.
             // The result will be handled by the qrScannerLauncher defined above.
-            Intent intent = new Intent(StartActivity.this, QRScannerActivity.class);
+            Intent intent = new Intent(InitialActivity.this, QRScannerActivity.class);
             qrScannerLauncher.launch(intent);
         });
     }

@@ -36,14 +36,14 @@ public class MainActivity extends AppCompatActivity {
 
     private void handleScannedOrigin() {
         Intent intent = getIntent();
-        if (intent == null || !intent.hasExtra(StartActivity.EXTRA_SCANNED_ORIGIN_DATA)) {
+        if (intent == null || !intent.hasExtra(InitialActivity.EXTRA_SCANNED_ORIGIN_DATA)) {
             Log.e(TAG, "MainActivity started without required origin QR data.");
             Toast.makeText(this, "Error: No starting location found.", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
 
-        String qrData = intent.getStringExtra(StartActivity.EXTRA_SCANNED_ORIGIN_DATA);
+        String qrData = intent.getStringExtra(InitialActivity.EXTRA_SCANNED_ORIGIN_DATA);
 
         try {
             // Step 1: Load the entire map from the full QR string.
