@@ -22,6 +22,7 @@ public class NavigationActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
         setContentView(R.layout.activity_navigation);
 
         TextView distanceTextView = findViewById(R.id.distanceTextView);
@@ -63,6 +64,8 @@ public class NavigationActivity extends AppCompatActivity {
         }
         mapView.setData(graph, pathNodeIds, destinationId);
         distanceTextView.setText(String.format(Locale.getDefault(), "%d meters (approx.)", result.totalDistance));
+
+        TtsManager.speak("The total distance from" + originId + "   to   " + destinationId + "is" + result.totalDistance + "meters.");
 
         // --- Set up Confirm Button ---
         confirmButton.setOnClickListener(v -> {

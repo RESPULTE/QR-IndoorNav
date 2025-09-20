@@ -13,6 +13,7 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Looper;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -21,7 +22,6 @@ import com.example.qr_indoornav.model.Location;
 import com.example.qr_indoornav.model.MapData;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.card.MaterialCardView;
-import com.google.android.material.switchmaterial.SwitchMaterial;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -52,24 +52,26 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
     private enum AlignmentState { ALIGNING, WAITING_TO_NAVIGATE, FINISHED }
     private AlignmentState currentState = AlignmentState.ALIGNING;
 
-    // --- NAVIGATION STATE (Refactored) ---
-    private List<PathFinder.PathLeg> pathLegs; // The single source of truth for the path
-    private List<Location> timelineLocations; // Location objects for the UI timeline
-    private int currentLegIndex = 0; // Index of the leg to execute from the pathLegs list
-    private int stepsTakenInLeg = 0; // Steps accumulated for the current leg
-
+    // --- NAVIGATION STATE ---
+    private List<PathFinder.PathLeg> pathLegs;
+    private List<Location> timelineLocations;
+    private int currentLegIndex = 0;
+    private int stepsTakenInLeg = 0;
     private final Handler navigationHandler = new Handler();
     private Runnable navigationRunnable;
+
+    // --- NEW: TTS Guidance State ---
+    private long lastTtsGuidanceTime = 0;
+    private static final long TTS_GUIDANCE_INTERVAL = 5000; // 5 seconds
+    private boolean hasAnnouncedAlignment = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_compass);
 
-        // Receive the pre-calculated path legs from NavigationActivity
         pathLegs = (ArrayList<PathFinder.PathLeg>) getIntent().getSerializableExtra(NavigationActivity.EXTRA_PATH_LEGS);
 
-        // Validate the received path
         if (pathLegs == null || pathLegs.isEmpty()) {
             Toast.makeText(this, "Invalid navigation path received.", Toast.LENGTH_LONG).show();
             finish();
@@ -84,47 +86,8 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         loadCurrentLegData();
     }
 
-    private void initializeUI() {
-        arrowImageView = findViewById(R.id.arrowImageView);
-        targetTextView = findViewById(R.id.targetTextView);
-        currentTextView = findViewById(R.id.currentTextView);
-        instructionTextView = findViewById(R.id.instructionTextView);
-        compassBackgroundCard = findViewById(R.id.compassBackgroundCard);
-        timelineView = findViewById(R.id.timelineView);
-        MaterialToolbar toolbar = findViewById(R.id.toolbar);
-        toolbar.setNavigationOnClickListener(v -> finish());
-        // Other UI setup as before...
-    }
-
-    private void setupSensors() {
-        sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
-        stepDetector = new StepDetector(null);
-    }
-
-    /**
-     * Constructs the list of Location objects for the UI timeline from the path legs.
-     */
-    private void setupTimeline() {
-        ArrayList<String> pathIds = new ArrayList<>();
-        pathIds.add(pathLegs.get(0).fromId); // Add the starting point
-        for (PathFinder.PathLeg leg : pathLegs) {
-            pathIds.add(leg.toId); // Add each destination point
-        }
-
-        this.timelineLocations = pathIds.stream()
-                .map(MapData::getLocationById)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList());
-    }
-
-    /**
-     * Loads data for the current leg directly from the pre-calculated pathLegs list.
-     * NO internal calculations are performed.
-     */
     private void loadCurrentLegData() {
-        // Check if the journey is complete
         if (currentLegIndex >= pathLegs.size()) {
-            // This state is now only a fallback, the main "finished" logic is in verifyScanAndUpdateJourney
             currentState = AlignmentState.FINISHED;
             instructionTextView.setText(R.string.destination_reached);
             targetTextView.setText(R.string.target_complete);
@@ -135,125 +98,22 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
             return;
         }
 
-        // Get the current leg's pre-calculated data
         PathFinder.PathLeg currentLeg = pathLegs.get(currentLegIndex);
 
-        // Update UI for the current leg
         updateTargetText(currentLeg.direction);
         updateTimeline();
         currentState = AlignmentState.ALIGNING;
         instructionTextView.setText(R.string.align_for_checkpoint);
-    }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-
-        if (requestCode == PROGRESS_REQUEST_CODE) {
-            if (data != null) {
-                stepsTakenInLeg = data.getIntExtra("EXTRA_STEPS_TAKEN", stepsTakenInLeg);
+        // --- NEW: Reset TTS state for the new leg ---
+        hasAnnouncedAlignment = false;
+        lastTtsGuidanceTime = System.currentTimeMillis(); // Reset timer to give initial delay
+        // Speak the instruction for the new leg after a short delay
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (currentState != AlignmentState.FINISHED) {
+                TtsManager.speak("New checkpoint. Please align with the arrow.");
             }
-            if (resultCode == RESULT_OK) {
-                launchQrScanner();
-            } else {
-                Toast.makeText(this, "Navigation paused. Re-align to resume.", Toast.LENGTH_SHORT).show();
-                loadCurrentLegData();
-            }
-        } else if (requestCode == QR_SCANNER_REQUEST_CODE) {
-            if (resultCode == RESULT_OK && data != null) {
-                verifyScanAndUpdateJourney(data.getStringExtra("DECODED_TEXT"));
-            } else {
-                Toast.makeText(this, "QR scan cancelled. Please scan to continue.", Toast.LENGTH_SHORT).show();
-            }
-        }
-    }
-
-    /**
-     * Verifies the scanned QR code against the expected destination of the current leg.
-     */
-    private void verifyScanAndUpdateJourney(String decodedJson) {
-        QRParser.ScannedQRData scannedData = QRParser.parse(decodedJson);
-        if (scannedData.type == QRParser.ScannedQRData.QRType.INVALID) {
-            showErrorDialog("valid QR code", "Invalid Data");
-            return;
-        }
-
-        String expectedNextNodeId = pathLegs.get(currentLegIndex).toId;
-        String finalDestinationId = pathLegs.get(pathLegs.size() - 1).toId;
-
-        if (scannedData.id.equals(expectedNextNodeId)) {
-            // SUCCESS: Scanned QR matches the expected stop.
-            Toast.makeText(this, "Correct Location: " + scannedData.id, Toast.LENGTH_SHORT).show();
-            currentLegIndex++; // Advance to the next leg
-
-            if (scannedData.id.equals(finalDestinationId)) {
-                // --- MODIFIED: LAUNCH SUCCESS ACTIVITY INSTEAD OF DIALOG ---
-                // Destination reached! Launch the success screen.
-                Intent intent = new Intent(this, SuccessActivity.class);
-                startActivity(intent);
-                finish(); // Close this compass activity
-                return;   // Exit the method
-                // --- END MODIFICATION ---
-
-            } else {
-                int remainingStops = pathLegs.size() - currentLegIndex;
-                String message = "You have arrived at " + expectedNextNodeId + ".\n" +
-                        remainingStops + " more stop(s) to go.";
-                // --- MODIFIED: Call the simplified dialog method ---
-                showSuccessDialog(message);
-            }
-        } else {
-            // FAILURE: Scanned QR does not match.
-            showErrorDialog(expectedNextNodeId, scannedData.id);
-        }
-    }
-
-    private void setupNavigationRunnable() {
-        navigationRunnable = () -> {
-            if (currentState == AlignmentState.WAITING_TO_NAVIGATE) {
-                PathFinder.PathLeg currentLeg = pathLegs.get(currentLegIndex);
-
-                Intent intent = new Intent(CompassActivity.this, ProgressActivity.class);
-                intent.putExtra(ProgressActivity.EXTRA_TARGET_DEGREE, currentLeg.direction);
-                intent.putExtra(ProgressActivity.EXTRA_DISTANCE_METERS, currentLeg.distance);
-                intent.putExtra(ProgressActivity.EXTRA_INITIAL_STEPS, stepsTakenInLeg);
-                startActivityForResult(intent, PROGRESS_REQUEST_CODE);
-                currentState = AlignmentState.ALIGNING;
-            }
-        };
-    }
-
-    private void launchQrScanner() {
-        Intent scannerIntent = new Intent(this, QRScannerActivity.class);
-        String expectedNextNodeId = pathLegs.get(currentLegIndex).toId;
-        int remainingLegs = pathLegs.size() - 1 - currentLegIndex;
-        scannerIntent.putExtra("EXPECTED_NODE_ID", expectedNextNodeId);
-        scannerIntent.putExtra("REMAINING_LEGS", remainingLegs);
-        startActivityForResult(scannerIntent, QR_SCANNER_REQUEST_CODE);
-    }
-
-    // --- MODIFIED: SIMPLIFIED DIALOG FOR INTERMEDIATE CHECKPOINTS ---
-    private void showSuccessDialog(String message) {
-        new AlertDialog.Builder(this)
-                .setTitle("Checkpoint Reached!")
-                .setMessage(message)
-                .setCancelable(false)
-                .setPositiveButton("Proceed", (dialog, which) -> {
-                    stepsTakenInLeg = 0; // Reset for new leg
-                    loadCurrentLegData(); // Load next leg's data
-                })
-                .show();
-    }
-    // --- END MODIFICATION ---
-
-    private void showErrorDialog(String expectedId, String scannedId) {
-        new AlertDialog.Builder(this)
-                .setTitle("QR Code Mismatch")
-                .setMessage("Expected: " + expectedId + "\nScanned: " + scannedId + "\n\nPlease find the correct QR code and try again.")
-                .setCancelable(false)
-                .setPositiveButton("Rescan", (dialog, which) -> launchQrScanner())
-                .setNegativeButton("Cancel", (dialog, which) -> dialog.dismiss())
-                .show();
+        }, 1000); // 1-second delay
     }
 
     @Override
@@ -296,13 +156,13 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         if (accelerometerReading[0] == 0 && magnetometerReading[0] == 0) return;
 
         float targetDegree = pathLegs.get(currentLegIndex).direction;
-
         float[] orientationAngles = new float[3];
         SensorManager.getRotationMatrix(rotationMatrix, null, accelerometerReading, magnetometerReading);
         SensorManager.getOrientation(rotationMatrix, orientationAngles);
         float azimuthInRadians = orientationAngles[0];
         float currentDegree = (float) Math.toDegrees(azimuthInRadians);
         if (currentDegree < 0) currentDegree += 360;
+
         float bearingToTarget = (targetDegree - currentDegree + 360) % 360;
         arrowImageView.setRotation(bearingToTarget);
         updateCurrentText(currentDegree);
@@ -310,6 +170,9 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
     }
 
     private void checkAlignment(float currentDegree, float targetDegree) {
+        // --- NEW: Provide TTS guidance based on the current orientation ---
+        provideTtsGuidance(currentDegree, targetDegree);
+
         boolean isOnTarget = stepDetector.isAlignedWithTarget(currentDegree, targetDegree);
         if (isOnTarget) {
             compassBackgroundCard.setCardBackgroundColor(ContextCompat.getColor(this, R.color.compass_bg_target_reached));
@@ -326,6 +189,191 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
                 navigationHandler.removeCallbacks(navigationRunnable);
             }
         }
+    }
+
+    // --- NEW: Method to handle all TTS guidance logic ---
+    private void provideTtsGuidance(float currentDegree, float targetDegree) {
+        boolean isCurrentlyAligned = stepDetector.isAlignedWithTarget(currentDegree, targetDegree);
+
+        if (isCurrentlyAligned) {
+            if (!hasAnnouncedAlignment) {
+                TtsManager.speak("Aligned. Hold steady to proceed.");
+                hasAnnouncedAlignment = true; // Set flag to prevent spamming
+            }
+            // If aligned, no further guidance is needed.
+            return;
+        }
+
+        // --- Logic for when NOT aligned ---
+        if (hasAnnouncedAlignment) {
+            // This block runs once when the user moves from an aligned state to a misaligned one.
+            TtsManager.speak("Off-course. Please re-align.");
+            hasAnnouncedAlignment = false; // Reset the flag
+            lastTtsGuidanceTime = System.currentTimeMillis(); // Give user a moment before the next instruction
+            return; // Exit to avoid giving another instruction immediately
+        }
+
+        // Check if enough time has passed for the next periodic guidance
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastTtsGuidanceTime > TTS_GUIDANCE_INTERVAL) {
+            // Calculate the difference for directional guidance
+            float diff = targetDegree - currentDegree;
+
+            // Normalize the difference to be between -180 and 180 for easiest turn direction
+            if (diff > 180) diff -= 360;
+            else if (diff < -180) diff += 360;
+
+            String direction = (diff > 0) ? "right" : "left";
+            String magnitude;
+            float absDiff = Math.abs(diff);
+
+            // Determine how much to turn
+            if (absDiff <= 25) magnitude = "a little";
+            else if (absDiff <= 70) magnitude = "slightly";
+            else magnitude = ""; // For larger turns, "Turn right." is sufficient.
+
+            String guidanceMessage;
+            if (magnitude.isEmpty()) {
+                guidanceMessage = String.format("Turn %s.", direction);
+            } else {
+                guidanceMessage = String.format("Turn %s to the %s.", magnitude, direction);
+            }
+
+            TtsManager.speak(guidanceMessage);
+            lastTtsGuidanceTime = currentTime; // Update the time of the last guidance
+        }
+    }
+
+
+    // --- UNCHANGED METHODS BELOW ---
+    // (All other methods like initializeUI, setupSensors, onActivityResult, etc., remain the same)
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == PROGRESS_REQUEST_CODE) {
+            if (data != null) {
+                stepsTakenInLeg = data.getIntExtra("EXTRA_STEPS_TAKEN", stepsTakenInLeg);
+            }
+            if (resultCode == RESULT_OK) {
+                launchQrScanner();
+            } else {
+                Toast.makeText(this, "Navigation paused. Re-align to resume.", Toast.LENGTH_SHORT).show();
+                TtsManager.speak("You have gone off-course, please re-align to continue.");
+                loadCurrentLegData();
+            }
+        } else if (requestCode == QR_SCANNER_REQUEST_CODE) {
+            if (resultCode == RESULT_OK && data != null) {
+                verifyScanAndUpdateJourney(data.getStringExtra("DECODED_TEXT"));
+            } else {
+                Toast.makeText(this, "QR scan cancelled. Please scan to continue.", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    private void verifyScanAndUpdateJourney(String decodedJson) {
+        QRParser.ScannedQRData scannedData = QRParser.parse(decodedJson);
+        if (scannedData.type == QRParser.ScannedQRData.QRType.INVALID) {
+            showErrorDialog("valid QR code", "Invalid Data");
+            return;
+        }
+
+        String expectedNextNodeId = pathLegs.get(currentLegIndex).toId;
+        String finalDestinationId = pathLegs.get(pathLegs.size() - 1).toId;
+
+        if (scannedData.id.equals(expectedNextNodeId)) {
+            Toast.makeText(this, "Correct Location: " + scannedData.id, Toast.LENGTH_SHORT).show();
+            currentLegIndex++;
+
+            if (scannedData.id.equals(finalDestinationId)) {
+                Intent intent = new Intent(this, SuccessActivity.class);
+                startActivity(intent);
+                finish();
+                return;
+            } else {
+                int remainingStops = pathLegs.size() - currentLegIndex;
+                String message = "Checkpoint reached. You have " + remainingStops + " more stops to go.";
+                TtsManager.speak(message);
+                showSuccessDialog("You have arrived at " + expectedNextNodeId + ".\n" + remainingStops + " more stop(s) to go.");
+            }
+        } else {
+            TtsManager.speak("Wrong QR code scanned. Please find the correct one.");
+            showErrorDialog(expectedNextNodeId, scannedData.id);
+        }
+    }
+
+    private void initializeUI() {
+        arrowImageView = findViewById(R.id.arrowImageView);
+        targetTextView = findViewById(R.id.targetTextView);
+        currentTextView = findViewById(R.id.currentTextView);
+        instructionTextView = findViewById(R.id.instructionTextView);
+        compassBackgroundCard = findViewById(R.id.compassBackgroundCard);
+        timelineView = findViewById(R.id.timelineView);
+        MaterialToolbar toolbar = findViewById(R.id.toolbar);
+        toolbar.setNavigationOnClickListener(v -> finish());
+    }
+
+    private void setupSensors() {
+        sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        stepDetector = new StepDetector(null);
+    }
+
+    private void setupTimeline() {
+        ArrayList<String> pathIds = new ArrayList<>();
+        pathIds.add(pathLegs.get(0).fromId);
+        for (PathFinder.PathLeg leg : pathLegs) {
+            pathIds.add(leg.toId);
+        }
+        this.timelineLocations = pathIds.stream()
+                .map(MapData::getLocationById)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+    }
+
+    private void setupNavigationRunnable() {
+        navigationRunnable = () -> {
+            if (currentState == AlignmentState.WAITING_TO_NAVIGATE) {
+                PathFinder.PathLeg currentLeg = pathLegs.get(currentLegIndex);
+                Intent intent = new Intent(CompassActivity.this, ProgressActivity.class);
+                intent.putExtra(ProgressActivity.EXTRA_TARGET_DEGREE, currentLeg.direction);
+                intent.putExtra(ProgressActivity.EXTRA_DISTANCE_METERS, currentLeg.distance);
+                intent.putExtra(ProgressActivity.EXTRA_INITIAL_STEPS, stepsTakenInLeg);
+                startActivityForResult(intent, PROGRESS_REQUEST_CODE);
+                currentState = AlignmentState.ALIGNING;
+            }
+        };
+    }
+
+    private void launchQrScanner() {
+        Intent scannerIntent = new Intent(this, QRScannerActivity.class);
+        String expectedNextNodeId = pathLegs.get(currentLegIndex).toId;
+        int remainingLegs = pathLegs.size() - 1 - currentLegIndex;
+        scannerIntent.putExtra("EXPECTED_NODE_ID", expectedNextNodeId);
+        scannerIntent.putExtra("REMAINING_LEGS", remainingLegs);
+        startActivityForResult(scannerIntent, QR_SCANNER_REQUEST_CODE);
+    }
+
+    private void showSuccessDialog(String message) {
+        new AlertDialog.Builder(this)
+                .setTitle("Checkpoint Reached!")
+                .setMessage(message)
+                .setCancelable(false)
+                .setPositiveButton("Proceed", (dialog, which) -> {
+                    stepsTakenInLeg = 0;
+                    loadCurrentLegData();
+                })
+                .show();
+    }
+
+    private void showErrorDialog(String expectedId, String scannedId) {
+        new AlertDialog.Builder(this)
+                .setTitle("QR Code Mismatch")
+                .setMessage("Expected: " + expectedId + "\nScanned: " + scannedId + "\n\nPlease find the correct QR code and try again.")
+                .setCancelable(false)
+                .setPositiveButton("Rescan", (dialog, which) -> launchQrScanner())
+                .setNegativeButton("Cancel", (dialog, which) -> dialog.dismiss())
+                .show();
     }
 
     private void updateTimeline() {

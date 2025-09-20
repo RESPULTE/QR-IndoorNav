@@ -35,6 +35,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.example.qr_indoornav.TtsManager; // Import the new manager
+
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "MainActivity";
@@ -47,11 +49,9 @@ public class MainActivity extends AppCompatActivity {
     // Navigation State
     private String scannedLocationId;
 
-    // Voice and Speech Components
+    // --- MODIFIED: REMOVED TextToVoiceHelper ---
     private SpeechRecognizer speechRecognizer;
     private Intent speechRecognizerIntent;
-    private TextToVoiceHelper textToVoiceHelper;
-    private boolean isTtsInitialized = false;
     private ActivityResultLauncher<String> requestPermissionLauncher;
 
     @Override
@@ -61,10 +61,23 @@ public class MainActivity extends AppCompatActivity {
 
         initializePermissionLauncher();
         initializeUI();
-        initializeVoiceAndSpeech();
+        // --- MODIFIED: Simplified this method ---
+        initializeSpeechToText();
         handleScannedOrigin();
         setupClickListeners();
     }
+
+    private void initializeSpeechToText() {
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
+        speechRecognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        // ... (rest of the SpeechRecognizer setup is the same)
+        speechRecognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        speechRecognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        speechRecognizerIntent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+
+        speechRecognizer.setRecognitionListener(createRecognitionListener());
+    }
+
 
     private void initializePermissionLauncher() {
         requestPermissionLauncher = registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
@@ -83,22 +96,7 @@ public class MainActivity extends AppCompatActivity {
         recognizedTextView.setText("Press and hold the mic to speak");
     }
 
-    private void initializeVoiceAndSpeech() {
-        // Text-To-Speech Setup
-        textToVoiceHelper = new TextToVoiceHelper(this, success -> {
-            isTtsInitialized = success;
-            Log.i(TAG, "TTS Initialization successful: " + success);
-        });
 
-        // Speech-To-Text Setup (Direct Recognizer)
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
-        speechRecognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-        speechRecognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-        speechRecognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        speechRecognizerIntent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
-
-        speechRecognizer.setRecognitionListener(createRecognitionListener());
-    }
 
     private RecognitionListener createRecognitionListener() {
         return new RecognitionListener() {
@@ -148,7 +146,7 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }, 3000);
 
-                speak("what the fuck u say.");
+                TtsManager.speak("what the fuck u say.");
             }
 
             @Override
@@ -292,7 +290,7 @@ public class MainActivity extends AppCompatActivity {
             Location matchedLocation = potentialMatches.get(0);
             autoCompleteTextView.setText(matchedLocation.displayName, false); // Update text without filtering
             autoCompleteTextView.clearFocus();
-            speak("Found location: " + matchedLocation.displayName);
+            TtsManager.speak("Found location: " + matchedLocation.displayName);
         }
     }
 
@@ -307,12 +305,6 @@ public class MainActivity extends AppCompatActivity {
             input = input.replaceAll("\\b" + entry.getKey() + "\\b", entry.getValue());
         }
         return input;
-    }
-
-    private void speak(String text) {
-        if (isTtsInitialized) {
-            textToVoiceHelper.speak(text);
-        }
     }
 
     public static String getErrorText(int errorCode) {
@@ -335,9 +327,6 @@ public class MainActivity extends AppCompatActivity {
         super.onDestroy();
         if (speechRecognizer != null) {
             speechRecognizer.destroy();
-        }
-        if (textToVoiceHelper != null) {
-            textToVoiceHelper.shutdown();
         }
     }
 }
