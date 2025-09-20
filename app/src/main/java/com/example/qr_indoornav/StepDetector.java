@@ -1,24 +1,25 @@
 package com.example.qr_indoornav;
 
-import android.hardware.SensorManager;
-
 /**
- * A unified module for handling step detection, alignment checks, and related calibration.
+ * A unified module for simple dead reckoning, handling step detection, position tracking,
+ * and error accumulation to determine when realignment is necessary.
  *
- * REFINEMENTS:
- * 1.  Improved Step Detection: Implemented a peak-and-valley detection algorithm.
- *     A step is only registered after acceleration rises above a threshold (peak)
- *     and then falls below a lower threshold (valley). This makes the detector
- *     more robust against single, sudden shakes.
+ * REFINEMENTS (Dead Reckoning Model):
+ * 1.  Position Tracking: Instead of just counting steps, this class now tracks the user's
+ *     estimated (x, y) position in meters. It assumes the user starts at (0, 0).
  *
- * 2.  Directional Deviation Tolerance: Added a mechanism to tolerate brief
- *     deviations from the target direction. Instead of immediately rejecting
- *     off-direction steps, it now tracks consecutive off-direction movements.
- *     A new method, `needsRealignment()`, allows the calling UI to query if the
- *     user is consistently off-track before prompting for realignment.
+ * 2.  Accumulated Error Calculation: The system maintains an "ideal" position, which is where
+ *     the user *should* be if they walked perfectly straight along the target direction. The
+ *     "accumulated error" is the real-world distance (in meters) between the user's
+ *     actual estimated position and their ideal position.
  *
- * 3.  Centralized Alignment Logic: Includes a method to check for static alignment
- *     with a target direction, consolidating all directional checks into this class.
+ * 3.  Smarter Recalibration Prompts: The `needsRealignment()` method now triggers when the
+ *     accumulated error distance exceeds a set threshold. This is more intelligent than
+ *     counting "bad steps," as it correctly handles users who are slightly off but generally
+ *     moving in the right direction. It only flags users who are genuinely drifting off course.
+ *
+ * 4.  Dynamic Step Length: Step length is now calculated based on user height during
+ *     calibration, providing a more personalized experience.
  */
 public class StepDetector {
 
@@ -33,203 +34,181 @@ public class StepDetector {
     private final OnStepListener listener;
 
     // --- UNIFIED CONFIGURATION CONSTANTS ---
-    private static final float DEFAULT_USER_HEIGHT_CM = 175.0f; // Default height for initial calibration
+    private static final float DEFAULT_USER_HEIGHT_CM = 175.0f;
 
     // --- REFINED STEP DETECTION CONSTANTS ---
-    private static final long STEP_TIME_GATE_MS = 800; // Increased minimum time between steps to better filter out shakes.
-    private static final float STEP_DETECTION_LOWER_THRESHOLD_FACTOR = 0.9f; // A step is confirmed when magnitude drops below this factor of the dynamic threshold.
+    private static final long STEP_TIME_GATE_MS = 300; // Time between steps. Can be faster than the old value.
+    private static final float STEP_DETECTION_LOWER_THRESHOLD_FACTOR = 0.9f;
 
-    // --- DIRECTIONAL DEVIATION CONSTANTS ---
-    private static final int ALIGNMENT_DEGREE_MARGIN = 15; // Tolerance (degrees) for static alignment before starting to walk.
-    private static final int MOVEMENT_DIRECTION_MARGIN_DEGREES = 45; // Max allowed deviation (degrees) for a step to be considered "forward"
-    private static final int OFF_DIRECTION_TOLERANCE = 3; // Number of consecutive off-direction steps before flagging for realignment.
-    private static final long OFF_DIRECTION_RESET_TIME_MS = 2000; // If 2 seconds pass without an off-direction step, the counter resets.
+    // --- DEAD RECKONING & DIRECTIONAL CONSTANTS ---
+    private static final int ALIGNMENT_DEGREE_MARGIN = 20;
+    // A step is considered "forward" if it's within 90 degrees of the target. Beyond that, it's sideways or backward.
+    private static final int MOVEMENT_DIRECTION_MARGIN_DEGREES = 90;
+    // The maximum allowed distance (in meters) between the user's actual and ideal path before recalibration is advised.
+    private static final float REALIGNMENT_DISTANCE_THRESHOLD_METERS = 2.0f;
 
     // --- State Variables ---
-    public static double AVERAGE_STEP_LENGTH_METERS = 5; // The estimated distance of one step in meters
+    private float dynamicThreshold;
+    private long lastStepTime = 0;
+    private int stepsTaken = 0;
+    private boolean isPeakDetected = false;
 
-    private float dynamicThreshold; // Accelerometer magnitude threshold, adjusted by height
-    private long lastStepTime = 0; // Timestamp of the last detected valid step
-    private int stepsTaken = 0; // Total steps counted since the last reset
-
-    // --- NEW State Variables for Refined Detection ---
-    private boolean isPeakDetected = false; // Tracks if the 'peak' of a step's acceleration has been detected.
-    private int consecutiveOffDirectionSteps = 0; // Counter for steps taken in the wrong direction.
-    private long lastOffDirectionStepTime = 0; // Timestamp of the last off-direction step.
+    // --- NEW Dead Reckoning State Variables ---
+    public static float AVERAGE_STEP_LENGTH_METERS;
+    // The user's actual estimated position, updated with each step's real direction.
+    private double currentUserX = 0;
+    private double currentUserY = 0;
+    // The user's ideal position, assuming they walked perfectly straight.
+    private double idealUserX = 0;
+    private double idealUserY = 0;
 
     /**
      * Constructor for the StepDetector.
-     * @param listener The object that will receive step notifications. Can be null if only using for alignment checks.
+     * @param listener The object that will receive step notifications.
      */
     public StepDetector(OnStepListener listener) {
         this.listener = listener;
-        // Calibrate with a default user height when the detector is created.
         calibrate(DEFAULT_USER_HEIGHT_CM);
     }
 
     /**
-     * Calibrates the step detection threshold and step length based on the user's height.
-     * Taller individuals generally have a more pronounced acceleration spike during a step.
-     * This method can be called dynamically if user height changes.
+     * Calibrates thresholds and step length based on the user's height.
      * @param userHeightCm The user's height in centimeters.
      */
     public void calibrate(float userHeightCm) {
-        // Base threshold (for an average 170cm person) + adjustment based on height difference.
-        // These values are empirical and might need further tuning.
-        float baseThreshold = 11.0f; // A typical acceleration magnitude for a step (m/s^2)
-        float sensitivity = 0.05f;   // How much the threshold changes per cm of height difference
-
+        // Calibrate step detection sensitivity
+        float baseThreshold = 11.0f;
+        float sensitivity = 0.05f;
         this.dynamicThreshold = baseThreshold + (userHeightCm - 170.0f) * sensitivity;
+
+        // Calibrate average step length (a common estimate is height * 0.414)
+        this.AVERAGE_STEP_LENGTH_METERS = (userHeightCm / 100.0f) * 0.414f;
     }
 
     /**
-     * Checks if the user's current heading is aligned with the target direction within a predefined margin of error.
-     * This is used for static alignment before navigation begins.
-     *
+     * Checks if the user's current heading is aligned with the target direction for initial setup.
      * @param currentDegree The user's current compass heading (0-360).
      * @param targetDegree  The target compass heading (0-360).
-     * @return true if the user is facing the target direction, false otherwise.
+     * @return true if the user is facing the target direction.
      */
     public boolean isAlignedWithTarget(float currentDegree, float targetDegree) {
         float difference = Math.abs(currentDegree - targetDegree);
         if (difference > 180) {
-            difference = 360 - difference; // Get the shortest angular difference
+            difference = 360 - difference;
         }
         return difference <= ALIGNMENT_DEGREE_MARGIN;
     }
 
     /**
-     * Processes raw accelerometer data to detect steps using a peak-and-valley algorithm.
-     * A step is counted if:
-     * 1. The acceleration magnitude surpasses a dynamic threshold (the "peak").
-     * 2. The magnitude then drops below a lower threshold (the "valley").
-     * 3. The time since the last step is sufficient (time gate).
-     * 4. The step's orientation is in the general forward direction of travel.
-     *
-     * It also tracks consecutive off-direction steps to determine if realignment is needed.
-     *
-     * @param acceleration The 3-axis (X, Y, Z) accelerometer data (m/s^2).
-     * @param rotationMatrix The current 9-element rotation matrix of the device,
-     *                       used to transform accelerometer data to world coordinates.
-     * @param targetDirection The compass direction (0-360 degrees) the user is intended to walk towards.
+     * Processes sensor data to detect steps and update the user's dead-reckoned position.
+     * @param acceleration The 3-axis accelerometer data (m/s^2).
+     * @param rotationMatrix The current 9-element rotation matrix of the device.
+     * @param targetDirection The compass direction (0-360 degrees) the user should walk towards.
      */
     public void processSensorData(float[] acceleration, float[] rotationMatrix, float targetDirection) {
         long now = System.currentTimeMillis();
 
-        // Automatically reset the off-direction counter if the user has been walking correctly
-        // or has stopped for a couple of seconds.
-        if (now - lastOffDirectionStepTime > OFF_DIRECTION_RESET_TIME_MS) {
-            consecutiveOffDirectionSteps = 0;
-        }
-
-        // 1. Time Gate: Prevents counting a single step multiple times.
         if (now - lastStepTime < STEP_TIME_GATE_MS) {
             return;
         }
 
-        // 2. Magnitude Calculation: Calculate the overall force (magnitude) of acceleration.
         float magnitude = (float) Math.sqrt(
                 acceleration[0] * acceleration[0] +
                         acceleration[1] * acceleration[1] +
                         acceleration[2] * acceleration[2]
         );
 
-        // 3. Peak and Valley Detection Logic
-        // Check for the peak of the step
         if (!isPeakDetected && magnitude > dynamicThreshold) {
             isPeakDetected = true;
-        }
-        // Check for the valley (end of the step) after a peak has been detected
-        else if (isPeakDetected && magnitude < (dynamicThreshold * STEP_DETECTION_LOWER_THRESHOLD_FACTOR)) {
-            // A potential step motion is complete. Now, check its direction.
-            if (isStepInForwardDirection(acceleration, rotationMatrix, targetDirection)) {
-                // --- VALID STEP IN CORRECT DIRECTION ---
-                lastStepTime = now;
-                stepsTaken++;
-
-                // A correct step resets the off-direction counter.
-                consecutiveOffDirectionSteps = 0;
-
-                // Notify the listener that a valid step has occurred.
-                if (listener != null) {
-                    listener.onStep(stepsTaken);
-                }
-            } else {
-                // --- STEP-LIKE MOTION IN WRONG DIRECTION ---
-                // This was a step, but not towards the target. Increment the off-direction counter.
-                consecutiveOffDirectionSteps++;
-                lastOffDirectionStepTime = now;
-            }
-
-            // Reset the peak detector to be ready for the next step.
-            isPeakDetected = false;
+        } else if (isPeakDetected && magnitude < (dynamicThreshold * STEP_DETECTION_LOWER_THRESHOLD_FACTOR)) {
+            // A peak-and-valley pattern indicates a potential step. Now, analyze its direction.
+            processStep(acceleration, rotationMatrix, targetDirection);
+            isPeakDetected = false; // Reset for the next step.
         }
     }
 
     /**
-     * Determines if the detected acceleration jolt (step) was primarily in the forward direction.
-     * This uses the device's rotation matrix to transform the acceleration vector from
-     * the phone's local coordinate system to the Earth's (world) coordinate system.
-     * @param acceleration The 3-axis accelerometer data in the device's coordinate system.
-     * @param currentRotationMatrix The 9-element rotation matrix representing the device's orientation.
-     * @param targetDirection The intended direction of movement (compass degrees).
-     * @return true if the horizontal component of the acceleration aligns with the target direction.
+     * Analyzes a detected step's direction, updates positions, and notifies the listener.
      */
-    private boolean isStepInForwardDirection(float[] acceleration, float[] currentRotationMatrix, float targetDirection) {
-        float[] accelerationInWorldCoords = new float[3];
-
-        // Transform acceleration from device coordinates to world coordinates.
-        // We only care about the X and Y components (horizontal movement).
+    private void processStep(float[] acceleration, float[] rotationMatrix, float targetDirection) {
+        // --- Determine the actual direction of the step ---
+        float[] worldAccel = new float[3];
         // R[0], R[1], R[2] are for World X (East)
         // R[3], R[4], R[5] are for World Y (North)
-        accelerationInWorldCoords[0] = currentRotationMatrix[0] * acceleration[0] + currentRotationMatrix[1] * acceleration[1] + currentRotationMatrix[2] * acceleration[2]; // World X
-        accelerationInWorldCoords[1] = currentRotationMatrix[3] * acceleration[0] + currentRotationMatrix[4] * acceleration[1] + currentRotationMatrix[5] * acceleration[2]; // World Y
+        worldAccel[0] = rotationMatrix[0] * acceleration[0] + rotationMatrix[1] * acceleration[1] + rotationMatrix[2] * acceleration[2];
+        worldAccel[1] = rotationMatrix[3] * acceleration[0] + rotationMatrix[4] * acceleration[1] + rotationMatrix[5] * acceleration[2];
 
-        // Calculate the azimuth (direction) of this horizontal movement.
-        // atan2(x, y) gives the angle from the +Y axis (North).
-        float movementAzimuth = (float) Math.toDegrees(Math.atan2(accelerationInWorldCoords[0], accelerationInWorldCoords[1]));
-        if (movementAzimuth < 0) {
-            movementAzimuth += 360; // Normalize to 0-360 degrees
+        // The direction (azimuth) of the horizontal movement.
+        double movementAzimuthRad = Math.atan2(worldAccel[0], worldAccel[1]);
+        float movementAzimuthDeg = (float) Math.toDegrees(movementAzimuthRad);
+        if (movementAzimuthDeg < 0) {
+            movementAzimuthDeg += 360;
         }
 
-        // Compare the movement direction with the target direction.
-        float difference = Math.abs(movementAzimuth - targetDirection);
+        // --- Check if the step was in a "forward" direction ---
+        float difference = Math.abs(movementAzimuthDeg - targetDirection);
         if (difference > 180) {
-            difference = 360 - difference; // Find the shortest angular difference
+            difference = 360 - difference;
         }
 
-        // If the movement direction is within the allowed margin of error from the target direction.
-        return difference <= MOVEMENT_DIRECTION_MARGIN_DEGREES;
+        if (difference <= MOVEMENT_DIRECTION_MARGIN_DEGREES) {
+            // --- VALID FORWARD STEP ---
+            lastStepTime = System.currentTimeMillis();
+            stepsTaken++;
+
+            // --- Update Ideal Position (perfect path) ---
+            double targetDirectionRad = Math.toRadians(targetDirection);
+            idealUserX += AVERAGE_STEP_LENGTH_METERS * Math.sin(targetDirectionRad);
+            idealUserY += AVERAGE_STEP_LENGTH_METERS * Math.cos(targetDirectionRad);
+
+            // --- Update Current Position (actual path) ---
+            currentUserX += AVERAGE_STEP_LENGTH_METERS * Math.sin(movementAzimuthRad);
+            currentUserY += AVERAGE_STEP_LENGTH_METERS * Math.cos(movementAzimuthRad);
+
+            if (listener != null) {
+                listener.onStep(stepsTaken);
+            }
+        }
+        // If the step was not "forward" (e.g., sideways or backward), we simply ignore it.
+        // It does not contribute to forward progress or error accumulation.
     }
 
     /**
-     * Checks if the user is consistently heading in the wrong direction.
-     * This can be polled by the UI to decide when to prompt the user to realign.
-     * The check is based on the number of consecutive steps detected
-     * that were outside the allowed directional margin.
-     *
-     * @return true if the number of consecutive off-direction steps has
-     *         exceeded the tolerance, otherwise false.
+     * Checks if the accumulated distance error between the user's actual path and the
+     * ideal path has exceeded the tolerance threshold.
+     * @return true if the user has drifted too far and should be prompted to realign.
      */
     public boolean needsRealignment() {
-        return consecutiveOffDirectionSteps >= OFF_DIRECTION_TOLERANCE;
+        return getAccumulatedError() > REALIGNMENT_DISTANCE_THRESHOLD_METERS;
     }
 
     /**
-     * Resets the internal step count and all related state variables.
-     * Useful for starting a new navigation leg.
-     * @param initialSteps The number of steps to set as the starting point.
+     * Calculates the straight-line distance between the user's current estimated position
+     * and their ideal position.
+     * @return The error distance in meters.
+     */
+    public double getAccumulatedError() {
+        double dx = currentUserX - idealUserX;
+        double dy = currentUserY - idealUserY;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    /**
+     * Resets the dead reckoning system to start a new navigation leg.
+     * @param initialSteps The number of steps to set as the starting point (usually 0).
      */
     public void reset(int initialSteps) {
         this.stepsTaken = initialSteps;
         this.lastStepTime = 0;
         this.isPeakDetected = false;
-        this.consecutiveOffDirectionSteps = 0;
-        this.lastOffDirectionStepTime = 0;
+        this.currentUserX = 0;
+        this.currentUserY = 0;
+        this.idealUserX = 0;
+        this.idealUserY = 0;
     }
 
     /**
-     * Gets the total number of steps detected since the last reset.
+     * Gets the total number of forward steps detected since the last reset.
      * @return The current step count.
      */
     public int getStepsTaken() {
@@ -237,8 +216,9 @@ public class StepDetector {
     }
 
     /**
-     * Calculates the total distance covered in meters based on the steps taken.
-     * @return The total distance in meters.
+     * Calculates the total distance covered along the ideal path in meters.
+     * This represents the user's progress toward the goal.
+     * @return The progress distance in meters.
      */
     public double getMetersCovered() {
         return stepsTaken * AVERAGE_STEP_LENGTH_METERS;
@@ -249,7 +229,7 @@ public class StepDetector {
      * @param totalDistanceMeters The total distance (in meters) for the current navigation leg.
      * @return The estimated number of steps still needed.
      */
-    public int getRemainingSteps(int totalDistanceMeters) {
+    public int getRemainingSteps(double totalDistanceMeters) {
         double metersRemaining = Math.max(0, totalDistanceMeters - getMetersCovered());
         return (int) Math.ceil(metersRemaining / AVERAGE_STEP_LENGTH_METERS);
     }

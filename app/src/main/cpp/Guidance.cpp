@@ -85,51 +85,9 @@ cv::Mat preprocessDownscale(const cv::Mat& frame) {
     return thresh;
 }
 
-// --- NEW FUNCTION ---
-// Checks for the B-W-B-W-B pattern by counting transitions along scanlines.
-bool passesRunLengthTest(const cv::Mat& gray, const cv::Rect& box) {
-    if (box.width <= 5 || box.height <= 5) return false;
 
-    // Ensure the box is within the image boundaries
-    if (box.x < 0 || box.y < 0 || box.x + box.width > gray.cols || box.y + box.height > gray.rows) return false;
-
-    cv::Point center = box.tl() + cv::Point(box.width / 2, box.height / 2);
-
-    auto checkScanline = [&](int start, int end, bool isHorizontal) {
-        int transitions = 0;
-        // Check if starting pixel is accessible
-        if ((isHorizontal ? start : center.x) < 0 || (isHorizontal ? center.y : start) < 0 ||
-            (isHorizontal ? start : center.x) >= gray.cols || (isHorizontal ? center.y : start) >= gray.rows) {
-            return false; // Cannot start check, scanline is out of bounds
-        }
-
-        bool lastPixelWhite = gray.at<uchar>(isHorizontal ? center.y : start, isHorizontal ? start : center.x) > 128;
-
-        for (int i = start + 1; i < end; ++i) {
-            // Check if current pixel is accessible
-            if ((isHorizontal ? i : center.x) < 0 || (isHorizontal ? center.y : i) < 0 ||
-                (isHorizontal ? i : center.x) >= gray.cols || (isHorizontal ? center.y : i) >= gray.rows) {
-                continue; // Skip out-of-bounds pixels
-            }
-
-            bool currentPixelWhite = gray.at<uchar>(isHorizontal ? center.y : i, isHorizontal ? i : center.x) > 128;
-            if (currentPixelWhite != lastPixelWhite) {
-                transitions++;
-            }
-            lastPixelWhite = currentPixelWhite;
-        }
-        // Expecting 5 runs = 4 transitions (B->W, W->B, B->W, W->B)
-        return transitions >= 3 && transitions <= 6; // Allow some tolerance
-    };
-
-    bool horizontalPass = checkScanline(box.x, box.x + box.width, true);
-    bool verticalPass = checkScanline(box.y, box.y + box.height, false);
-
-    return horizontalPass && verticalPass;
-}
-
-// Updated to take a grayscale image for the run-length test
-std::vector<FinderPattern> findFinderPatterns(const cv::Mat& gray, const std::vector<std::vector<cv::Point>>& contours, const std::vector<cv::Vec4i>& hierarchy, double min_area) {
+// Updated to take min_area as a parameter and store actual contour
+std::vector<FinderPattern> findFinderPatterns(const std::vector<std::vector<cv::Point>>& contours, const std::vector<cv::Vec4i>& hierarchy, double min_area) {
     std::vector<FinderPattern> patterns;
     for (int i = 0; i < contours.size(); ++i) {
         int child_idx = hierarchy[i][2];
@@ -143,11 +101,6 @@ std::vector<FinderPattern> findFinderPatterns(const cv::Mat& gray, const std::ve
 
         cv::RotatedRect box = cv::minAreaRect(contours[i]);
         if (box.size.area() == 0 || outerArea / box.size.area() < (1.0 - FINDER_SQUARE_TOLERANCE)) continue;
-
-        // --- NEW CHECK ADDED ---
-        cv::Rect boundingBox = cv::boundingRect(contours[i]);
-        if (!passesRunLengthTest(gray, boundingBox)) continue;
-        // --- END NEW CHECK ---
 
         double middleArea = cv::contourArea(contours[child_idx]);
         double innerArea = cv::contourArea(contours[grandchild_idx]);
@@ -174,17 +127,12 @@ std::vector<FinderPattern> processFrameForFinderPatterns(
         cv::resize(frame, current_frame, cv::Size(), scale_factor, scale_factor, cv::INTER_LINEAR);
     }
 
-    // --- MODIFIED: Generate grayscale image needed for run-length test ---
-    cv::Mat gray_for_test;
-    cv::cvtColor(current_frame, gray_for_test, cv::COLOR_BGR2GRAY);
-
     cv::Mat processed_img = preprocess_func(current_frame);
     std::vector<std::vector<cv::Point>> contours;
     std::vector<cv::Vec4i> hierarchy;
     cv::findContours(processed_img, contours, hierarchy, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
 
-    // --- MODIFIED: Pass grayscale image to findFinderPatterns ---
-    std::vector<FinderPattern> patterns = findFinderPatterns(gray_for_test, contours, hierarchy, min_area);
+    std::vector<FinderPattern> patterns = findFinderPatterns(contours, hierarchy, min_area);
 
     // If we scaled the input frame, we need to scale the detected pattern coordinates back
     if (scale_factor != 1.0) {
@@ -320,35 +268,18 @@ std::string processFrameForGuidance(cv::Mat& frame) {
         }
     }
 
-    // Limit QR code groups to 1, 2, or 3 patterns.
-    // If more than 3 patterns are found, it could be noise or multiple QR codes.
-    // For single QR code guidance, we treat this as an ambiguous case and invalidate the detection.
-    // This prevents the guidance system from trying to find a valid trio from a noisy set of 4+ patterns.
-    if (final_patterns.size() > 3) {
-        // Optional: Provide feedback on the screen.
-        cv::putText(frame, "Ambiguous: >3 patterns found", cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 165, 255), 2);
-        final_patterns.clear(); // Invalidate the list of patterns
-    }
-
     // 4. Provide guidance (draws directly onto the 'frame' Mat)
     provideUserGuidance(frame, final_patterns);
 
     std::string decoded_text = "";
-    if (!final_patterns.empty()) {
-        double totalArea = 0;
-        for (const auto& p : final_patterns) totalArea += p.area;
+    double totalArea = 0;
+    for (const auto& p : final_patterns) totalArea += p.area;
 
-        // Check if the QR code's apparent size is within our target range
-        if (totalArea >= MIN_DECODING_AREA && totalArea <= MAX_DECODING_AREA) {
-            // We are close enough, attempt to decode.
-            decoded_text = decodeQRCode(frame);
-
-            if (!decoded_text.empty()) {
-                // If successful, draw a confirmation on the screen
-                cv::Point textOrg(frame.cols / 2 - 100, frame.rows / 2);
-                cv::putText(frame, "DECODED!", textOrg, cv::FONT_HERSHEY_TRIPLEX, 1.5, cv::Scalar(0, 255, 0), 3);
-            }
-        }
+    decoded_text = decodeQRCode(frame);
+    if (!decoded_text.empty()) {
+        // If successful, draw a confirmation on the screen
+        cv::Point textOrg(frame.cols / 2 - 100, frame.rows / 2);
+        cv::putText(frame, "DECODED!", textOrg, cv::FONT_HERSHEY_TRIPLEX, 1.5, cv::Scalar(0, 255, 0), 3);
     }
 
     return decoded_text;
