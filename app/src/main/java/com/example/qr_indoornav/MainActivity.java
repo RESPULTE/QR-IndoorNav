@@ -65,6 +65,8 @@ public class MainActivity extends AppCompatActivity {
         initializeSpeechToText();
         handleScannedOrigin();
         setupClickListeners();
+
+        TtsManager.speak("Select your destination");
     }
 
     private void initializeSpeechToText() {

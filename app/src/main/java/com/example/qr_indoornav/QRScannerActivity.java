@@ -12,7 +12,7 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import android.Manifest;
-import android.content.Intent; // Import Intent
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.os.Bundle;
@@ -36,15 +36,20 @@ import java.util.concurrent.Executors;
 public class QRScannerActivity extends AppCompatActivity {
     private static final String TAG = "QRScannerActivity";
 
-    // This flag is still useful to prevent sending multiple results for a single scan session
     private boolean isProcessing = false;
 
     private static final int CAMERA_PERMISSION_REQUEST_CODE = 101;
+    // Debounce time in milliseconds to prevent TTS from speaking too often
+    private static final long GUIDANCE_DEBOUNCE_MS = 2500;
 
     private PreviewView previewView;
     private ImageView overlayImageView;
     private ExecutorService cameraExecutor;
     private Bitmap bitmapForOverlay;
+
+    // Variables to manage guidance speech
+    private String lastSpokenGuidance = "";
+    private long lastGuidanceTime = 0;
 
     static {
         System.loadLibrary("qr_indoornav");
@@ -81,9 +86,6 @@ public class QRScannerActivity extends AppCompatActivity {
         }
     }
 
-    // REMOVED: The verifyQRCode, showSuccessDialog, and showErrorDialog methods are no longer needed
-    // in this activity. CompassActivity handles all of that logic now.
-
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
 
@@ -106,8 +108,10 @@ public class QRScannerActivity extends AppCompatActivity {
 
                     Mat bgrMat = getRotatedBgrMatFromImage(image);
                     if (bgrMat != null) {
-                        String decodedResult = processFrame(bgrMat.getNativeObjAddr());
+                        // The native function now returns a string like "decoded_text|guidance_message"
+                        String combinedResult = processFrame(bgrMat.getNativeObjAddr());
 
+                        // Update the visual overlay
                         if (bitmapForOverlay == null || bitmapForOverlay.getWidth() != bgrMat.cols() || bitmapForOverlay.getHeight() != bgrMat.rows()) {
                             bitmapForOverlay = Bitmap.createBitmap(bgrMat.cols(), bgrMat.rows(), Bitmap.Config.ARGB_8888);
                         }
@@ -116,21 +120,37 @@ public class QRScannerActivity extends AppCompatActivity {
 
                         bgrMat.release();
 
-                        // *** START OF THE FIX ***
-                        // If the C++ module decoded something, send it back to CompassActivity and finish.
-                        if (decodedResult != null && !decodedResult.isEmpty()) {
-                            isProcessing = true; // Stop the analyzer from sending more results
+                        // --- NEW PARSING AND TTS LOGIC ---
+                        if (combinedResult != null && !combinedResult.isEmpty()) {
+                            String[] parts = combinedResult.split("\\+", -1);
+                            String decodedResult = parts.length > 0 ? parts[0] : "";
+                            String guidanceText = parts.length > 1 ? parts[1] : "";
 
-                            // Create an Intent to hold the result
-                            Intent resultIntent = new Intent();
-                            // Put the decoded text into the Intent. The key MUST match what CompassActivity expects.
-                            resultIntent.putExtra("DECODED_TEXT", decodedResult);
-                            // Set the result to OK and attach the Intent with the data
-                            setResult(RESULT_OK, resultIntent);
-                            // Close this activity and return to CompassActivity
-                            finish();
+                            // Speak guidance if it's new, not empty, and enough time has passed
+                            if (!guidanceText.isEmpty() && !guidanceText.equals(lastSpokenGuidance)) {
+                                long currentTime = System.currentTimeMillis();
+                                if (currentTime - lastGuidanceTime > GUIDANCE_DEBOUNCE_MS) {
+                                    TtsManager.speak(guidanceText);
+                                    lastSpokenGuidance = guidanceText;
+                                    lastGuidanceTime = currentTime;
+                                }
+                            } else if (guidanceText.isEmpty()) {
+                                // Reset last spoken guidance if guidance is now "OK" (empty string)
+                                lastSpokenGuidance = "";
+                            }
+
+                            // If the C++ module decoded something, send it back to CompassActivity and finish.
+                            if (!decodedResult.isEmpty()) {
+                                isProcessing = true; // Stop the analyzer from sending more results
+
+                                TtsManager.speak("QR code scanned");
+
+                                Intent resultIntent = new Intent();
+                                resultIntent.putExtra("DECODED_TEXT", decodedResult);
+                                setResult(RESULT_OK, resultIntent);
+                                finish();
+                            }
                         }
-                        // *** END OF THE FIX ***
                     }
                     image.close();
                 });
