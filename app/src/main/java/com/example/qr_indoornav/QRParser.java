@@ -52,7 +52,7 @@ public class QRParser {
             ScannedQRData.QRType type;
             if (typeChar == 'J') {
                 type = ScannedQRData.QRType.JUNCTION;
-            } else if (typeChar == 'r') {
+            } else if (typeChar == 'R') {
                 type = ScannedQRData.QRType.ROOM;
             } else {
                 Log.w(TAG, "Unknown QR type character in header: " + typeChar);
@@ -61,10 +61,17 @@ public class QRParser {
 
             // --- Generate the full ID string ---
             // 'A' corresponds to 1, 'B' to 2, and so on.
-            int numericValue = locationChar - 'A' + 1;
-            // Pad the number with leading zeros based on numDigits
-            String formatString = "%0" + numDigits + "d";
-            String id = prefix + String.format(formatString, numericValue);
+            int id_int = locationChar - 'A' + 1;
+            String id = "";
+            if (type == ScannedQRData.QRType.ROOM){
+                // Pad the number with leading zeros based on numDigits
+                String formatString = "%0" + numDigits + "d";
+                 id = prefix + String.format(formatString, id_int);
+            }
+            else{
+                 id = prefix + String.valueOf(id_int);
+            }
+
 
             // Return the successfully parsed data
             return new ScannedQRData(type, id);
