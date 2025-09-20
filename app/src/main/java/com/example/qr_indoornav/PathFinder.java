@@ -1,4 +1,3 @@
-// Create new file: Pathfinder.java
 package com.example.qr_indoornav;
 
 import android.util.Log;
@@ -6,6 +5,8 @@ import android.util.Pair;
 import com.example.qr_indoornav.model.Edge;
 import com.example.qr_indoornav.model.Graph;
 import com.example.qr_indoornav.model.Node;
+
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -18,84 +19,106 @@ public class PathFinder {
     private static final String TAG = "PathFinder";
 
     /**
-     * Represents the result of a pathfinding operation, including the path and its total distance.
+     * Represents a single leg of the journey with pre-calculated data.
+     * Implements Serializable to be easily passed via Intents.
      */
-    public static class PathResult {
-        public final List<String> nodeIds;
-        public final int totalDistance;
+    public static class PathLeg implements Serializable {
+        public final String fromId;
+        public final String toId;
+        public final float direction;
+        public final int distance;
 
-        public PathResult(List<String> nodeIds, int totalDistance) {
-            this.nodeIds = nodeIds;
-            this.totalDistance = totalDistance;
-        }
-
-        public boolean isFound() {
-            return nodeIds != null && !nodeIds.isEmpty();
+        public PathLeg(String fromId, String toId, float direction, int distance) {
+            this.fromId = fromId;
+            this.toId = toId;
+            this.direction = direction;
+            this.distance = distance;
         }
     }
 
     /**
-     * Main public method to find the optimal path. It handles any combination of
-     * Junctions and Rooms as origin and destination.
-     *
-     * @param graph The graph data.
-     * @param originId The ID of the starting location (can be a Junction or a Room).
-     * @param destinationId The ID of the destination location (can be a Junction or a Room).
-     * @return A PathResult containing the list of node IDs (including rooms) and total distance.
+     * Represents the complete result, containing a list of navigation legs and the total distance.
+     */
+    public static class PathResult {
+        public final List<PathLeg> legs;
+        public final int totalDistance;
+
+        public PathResult(List<PathLeg> legs, int totalDistance) {
+            this.legs = legs;
+            this.totalDistance = totalDistance;
+        }
+
+        public boolean isFound() {
+            return legs != null && !legs.isEmpty();
+        }
+    }
+
+    /**
+     * Main public method to find the optimal path.
+     * Returns a detailed list of PathLegs, each with pre-calculated distance and direction.
      */
     public static PathResult findPath(Graph graph, String originId, String destinationId) {
+        // --- Step 1: Find the optimal path as a sequence of IDs ---
+        List<String> optimalNodePath = findOptimalNodeSequence(graph, originId, destinationId);
+
+        if (optimalNodePath.isEmpty()) {
+            return new PathResult(Collections.emptyList(), 0);
+        }
+
+        // --- Step 2: Convert the sequence of IDs into a list of detailed PathLegs ---
+        List<PathLeg> pathLegs = new ArrayList<>();
+        int totalDistance = 0;
+
+        for (int i = 0; i < optimalNodePath.size() - 1; i++) {
+            String fromId = optimalNodePath.get(i);
+            String toId = optimalNodePath.get(i + 1);
+            PathLeg leg = createNavigationLeg(graph, fromId, toId);
+            if (leg != null) {
+                pathLegs.add(leg);
+                totalDistance += leg.distance;
+            } else {
+                // If any leg fails to be created, the path is invalid.
+                Log.e(TAG, "Failed to create navigation leg from " + fromId + " to " + toId);
+                return new PathResult(Collections.emptyList(), 0);
+            }
+        }
+
+        return new PathResult(pathLegs, totalDistance);
+    }
+
+    /**
+     * Determines the best sequence of location IDs (rooms and junctions) for the path.
+     * This is an internal helper that finds the node list before details are calculated.
+     */
+    private static List<String> findOptimalNodeSequence(Graph graph, String originId, String destinationId) {
         boolean isOriginRoom = graph.getNode(originId) == null;
         boolean isDestinationRoom = graph.getNode(destinationId) == null;
 
-        // --- Step 1: Handle the special case where origin and destination are rooms on the SAME edge ---
+        // Special case: Origin and destination are rooms on the same edge
         if (isOriginRoom && isDestinationRoom) {
             Pair<String, String> originJunctions = findEndpointJunctionsForRoom(graph, originId);
             Pair<String, String> destJunctions = findEndpointJunctionsForRoom(graph, destinationId);
 
-            // Check if they share the same pair of endpoint junctions
-            if (originJunctions != null && destJunctions != null &&
-                    ((Objects.equals(originJunctions.first, destJunctions.first) && Objects.equals(originJunctions.second, destJunctions.second)) ||
-                            (Objects.equals(originJunctions.first, destJunctions.second) && Objects.equals(originJunctions.second, destJunctions.first)))) {
-
-                Log.d(TAG, "Origin and Destination are rooms on the same edge.");
-                Edge edge = graph.getNode(originJunctions.first).getEdgeTo(originJunctions.second);
-                if (edge != null) {
-                    int dist = calculateIntraEdgeDistance(edge, originId, destinationId);
-                    List<String> path = new ArrayList<>();
-                    path.add(originId);
-                    path.add(destinationId); // Simple path: Start Room -> End Room
-                    return new PathResult(path, dist);
-                }
+            if (originJunctions != null && Objects.equals(originJunctions, destJunctions)) {
+                List<String> path = new ArrayList<>();
+                path.add(originId);
+                path.add(destinationId);
+                return path;
             }
         }
 
-        // --- Step 2: Get "Anchor Points" for origin and destination ---
-        // An anchor point is a junction that a location is connected to, and the distance to it.
-        // A Junction has one anchor (itself, distance 0). A Room has two (the ends of its edge).
+        // General case: Find best path via anchor points
         Map<String, Integer> originAnchors = getAnchorPoints(graph, originId);
         Map<String, Integer> destAnchors = getAnchorPoints(graph, destinationId);
 
-        if (originAnchors.isEmpty() || destAnchors.isEmpty()) {
-            Log.e(TAG, "Could not find anchor points for origin or destination.");
-            return new PathResult(Collections.emptyList(), 0);
-        }
-
-        // --- Step 3: Find the best path by checking all anchor-to-anchor combinations ---
         int minTotalDistance = Integer.MAX_VALUE;
         List<String> bestJunctionPath = null;
 
         for (Map.Entry<String, Integer> originAnchor : originAnchors.entrySet()) {
             for (Map.Entry<String, Integer> destAnchor : destAnchors.entrySet()) {
-                String startJunction = originAnchor.getKey();
-                String endJunction = destAnchor.getKey();
+                List<String> junctionPath = graph.findShortestPath(originAnchor.getKey(), destAnchor.getKey());
+                if (junctionPath.isEmpty() && !originAnchor.getKey().equals(destAnchor.getKey())) continue;
 
-                // Find the shortest path between the two anchor junctions
-                List<String> junctionPath = graph.findShortestPath(startJunction, endJunction);
-                if (junctionPath.isEmpty() && !startJunction.equals(endJunction)) {
-                    continue; // No path found between these anchors
-                }
-
-                // Calculate the total distance for this combination
                 int junctionPathDistance = calculateJunctionPathDistance(graph, junctionPath);
                 int totalDistance = originAnchor.getValue() + junctionPathDistance + destAnchor.getValue();
 
@@ -106,97 +129,109 @@ public class PathFinder {
             }
         }
 
-        if (bestJunctionPath == null) {
-            Log.e(TAG, "No valid path found between any anchor points.");
-            return new PathResult(Collections.emptyList(), 0);
-        }
+        if (bestJunctionPath == null) return Collections.emptyList();
 
-        // --- Step 4: Construct the final path list, adding rooms if necessary ---
+        // Construct the final path list, adding rooms if necessary
         List<String> finalPath = new ArrayList<>(bestJunctionPath);
-        if (isOriginRoom) {
-            finalPath.add(0, originId);
-        }
-        if (isDestinationRoom) {
-            // Avoid adding if the destination is the same as the last junction (edge case)
-            if (finalPath.isEmpty() || !finalPath.get(finalPath.size() - 1).equals(destinationId)) {
-                finalPath.add(destinationId);
-            }
-        }
+        if (isOriginRoom) finalPath.add(0, originId);
+        if (isDestinationRoom) finalPath.add(destinationId);
 
-        return new PathResult(finalPath, minTotalDistance);
+        return finalPath;
     }
 
     /**
-     * Gets the anchor junctions for a given location ID.
-     * - If the location is a Junction, returns a map with one entry: {junctionId, 0}.
-     * - If the location is a Room, returns a map with two entries: {junctionA, distToA}, {junctionB, distToB}.
-     *
-     * @return A map of anchor Junction IDs to the distance from the location to that junction.
+     * Creates a single detailed PathLeg object with calculated direction and distance.
+     * This is the new centralized logic for leg calculation.
      */
-    private static Map<String, Integer> getAnchorPoints(Graph graph, String locationId) {
-        Map<String, Integer> anchors = new HashMap<>();
+    private static PathLeg createNavigationLeg(Graph graph, String fromId, String toId) {
+        boolean isFromRoom = graph.getNode(fromId) == null;
+        boolean isToRoom = graph.getNode(toId) == null;
+        int distance = calculatePartialDistance(graph, fromId, toId);
 
-        // Case 1: The location is a junction itself.
-        if (graph.getNode(locationId) != null) {
-            anchors.put(locationId, 0);
-            return anchors;
+        // Case 1: Junction -> Junction
+        if (!isFromRoom && !isToRoom) {
+            Edge edge = graph.getNode(fromId).getEdgeTo(toId);
+            if (edge != null) return new PathLeg(fromId, toId, edge.directionDegrees, distance);
         }
 
-        // Case 2: The location is a room. Find its edge and calculate distances to both ends.
-        Pair<String, String> endpoints = findEndpointJunctionsForRoom(graph, locationId);
+        // Case 2: Involving at least one room
+        String roomId = isFromRoom ? fromId : toId;
+        Pair<String, String> endpoints = findEndpointJunctionsForRoom(graph, roomId);
         if (endpoints != null) {
-            Edge edge = graph.getNode(endpoints.first).getEdgeTo(endpoints.second);
-            if (edge != null) {
-                int totalRooms = edge.roomIds.size();
-                int roomIndex = edge.roomIds.indexOf(locationId);
-                if (roomIndex != -1) {
-                    float ratio = (float) (roomIndex + 1) / (totalRooms + 1);
-                    int distToA = (int) (ratio * edge.distanceMeters);
-                    int distToB = edge.distanceMeters - distToA;
-                    anchors.put(endpoints.first, distToA);
-                    anchors.put(endpoints.second, distToB);
+            Edge forwardEdge = graph.getNode(endpoints.first).getEdgeTo(endpoints.second);
+            if (forwardEdge != null) {
+                float direction;
+                int fromIndex = isFromRoom ? forwardEdge.roomIds.indexOf(fromId) : (fromId.equals(endpoints.first) ? -1 : 999);
+                int toIndex = isToRoom ? forwardEdge.roomIds.indexOf(toId) : (toId.equals(endpoints.first) ? -1 : 999);
+
+                // If traveling from a lower index to a higher index (or from J1 to anything), use forward direction.
+                if (fromIndex < toIndex) {
+                    direction = forwardEdge.directionDegrees;
+                } else { // Otherwise, use reverse direction.
+                    direction = (forwardEdge.directionDegrees + 180) % 360;
                 }
+                return new PathLeg(fromId, toId, direction, distance);
             }
         }
-        return anchors;
+        return null;
     }
 
     /**
-     * Calculates the distance between two rooms on the same edge.
+     * Universal distance calculator between any two points (rooms or junctions) on the same edge.
      */
-    private static int calculateIntraEdgeDistance(Edge edge, String roomA, String roomB) {
-        int totalRooms = edge.roomIds.size();
-        int indexA = edge.roomIds.indexOf(roomA);
-        int indexB = edge.roomIds.indexOf(roomB);
+    private static int calculatePartialDistance(Graph graph, String locA, String locB) {
+        boolean isARoom = graph.getNode(locA) == null;
+        boolean isBRoom = graph.getNode(locB) == null;
 
-        float ratioA = (float) (indexA + 1) / (totalRooms + 1);
-        float ratioB = (float) (indexB + 1) / (totalRooms + 1);
+        // If both are junctions, get direct edge distance
+        if (!isARoom && !isBRoom) {
+            Edge edge = graph.getNode(locA).getEdgeTo(locB);
+            return (edge != null) ? edge.distanceMeters : 0;
+        }
+
+        String aRoomId = isARoom ? locA : (isBRoom ? locB : null);
+        if (aRoomId == null) return 0;
+
+        Pair<String, String> endpoints = findEndpointJunctionsForRoom(graph, aRoomId);
+        if (endpoints == null) return 0;
+        Edge edge = graph.getNode(endpoints.first).getEdgeTo(endpoints.second);
+        if (edge == null) return 0;
+
+        int totalRooms = edge.roomIds.size();
+        float ratioA = isARoom ? (float)(edge.roomIds.indexOf(locA) + 1) / (totalRooms + 1)
+                : (locA.equals(endpoints.first) ? 0.0f : 1.0f);
+        float ratioB = isBRoom ? (float)(edge.roomIds.indexOf(locB) + 1) / (totalRooms + 1)
+                : (locB.equals(endpoints.first) ? 0.0f : 1.0f);
 
         return (int) (Math.abs(ratioA - ratioB) * edge.distanceMeters);
     }
 
-    /**
-     * Calculates the total distance of a path consisting only of junctions.
-     */
+    // --- Unchanged Helper Methods from previous version ---
+    private static Map<String, Integer> getAnchorPoints(Graph graph, String locationId) {
+        Map<String, Integer> anchors = new HashMap<>();
+        if (graph.getNode(locationId) != null) {
+            anchors.put(locationId, 0);
+            return anchors;
+        }
+        Pair<String, String> endpoints = findEndpointJunctionsForRoom(graph, locationId);
+        if (endpoints != null) {
+            int distToA = calculatePartialDistance(graph, locationId, endpoints.first);
+            int distToB = calculatePartialDistance(graph, locationId, endpoints.second);
+            anchors.put(endpoints.first, distToA);
+            anchors.put(endpoints.second, distToB);
+        }
+        return anchors;
+    }
+
     private static int calculateJunctionPathDistance(Graph graph, List<String> junctionPath) {
         int totalDistance = 0;
-        if (junctionPath == null || junctionPath.size() < 2) {
-            return 0;
-        }
+        if (junctionPath == null || junctionPath.size() < 2) return 0;
         for (int i = 0; i < junctionPath.size() - 1; i++) {
-            Node fromNode = graph.getNode(junctionPath.get(i));
-            String toNodeId = junctionPath.get(i + 1);
-            if (fromNode != null && fromNode.getEdgeTo(toNodeId) != null) {
-                totalDistance += fromNode.getEdgeTo(toNodeId).distanceMeters;
-            }
+            totalDistance += calculatePartialDistance(graph, junctionPath.get(i), junctionPath.get(i+1));
         }
         return totalDistance;
     }
 
-    /**
-     * Finds the two junctions that an edge (containing a specific room) connects.
-     * @return A Pair of junction IDs (from, to), or null if not found.
-     */
     private static Pair<String, String> findEndpointJunctionsForRoom(Graph graph, String roomId) {
         for (Node node : graph.getAllNodes()) {
             for (Edge edge : node.getEdges().values()) {
@@ -205,6 +240,6 @@ public class PathFinder {
                 }
             }
         }
-        return null; // Room not found on any edge
+        return null;
     }
 }

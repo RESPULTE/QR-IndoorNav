@@ -1,4 +1,4 @@
-package com.example.qr_indoornav;// In NavigationActivity.java
+package com.example.qr_indoornav;
 
 import androidx.appcompat.app.AppCompatActivity;
 import android.content.Intent;
@@ -7,30 +7,29 @@ import android.util.Log;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
-// No need to import Edge or Location here anymore
 import com.example.qr_indoornav.model.Graph;
 import com.example.qr_indoornav.model.MapData;
 import com.google.android.material.appbar.MaterialToolbar;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 public class NavigationActivity extends AppCompatActivity {
 
     private static final String TAG = "NavigationActivity";
+    public static final String EXTRA_PATH_LEGS = "PATH_LEGS"; // Public constant for the key
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_navigation);
 
-        // --- UI Initialization ---
         TextView distanceTextView = findViewById(R.id.distanceTextView);
         Button confirmButton = findViewById(R.id.confirmButton);
         MapView mapView = findViewById(R.id.mapView);
         MaterialToolbar toolbar = findViewById(R.id.toolbar);
         toolbar.setNavigationOnClickListener(v -> finish());
 
-        // --- Get Origin and Destination ---
         Intent intent = getIntent();
         String originId = intent.getStringExtra("USER_ORIGIN_ID");
         String destinationId = intent.getStringExtra("USER_DESTINATION_ID");
@@ -44,7 +43,7 @@ public class NavigationActivity extends AppCompatActivity {
 
         Graph graph = MapData.getGraph();
 
-        // --- Use the Pathfinder to get the optimal path and distance ---
+        // Use the Pathfinder to get the detailed path legs.
         PathFinder.PathResult result = PathFinder.findPath(graph, originId, destinationId);
 
         if (!result.isFound()) {
@@ -54,16 +53,22 @@ public class NavigationActivity extends AppCompatActivity {
         }
 
         // --- Display Results ---
-        mapView.setData(graph, result.nodeIds, destinationId);
+        // For the MapView, we need to reconstruct the simple list of node IDs from the legs.
+        List<String> pathNodeIds = new ArrayList<>();
+        if (!result.legs.isEmpty()) {
+            pathNodeIds.add(result.legs.get(0).fromId); // Add the very first node
+            for (PathFinder.PathLeg leg : result.legs) {
+                pathNodeIds.add(leg.toId); // Add the destination of each leg
+            }
+        }
+        mapView.setData(graph, pathNodeIds, destinationId);
         distanceTextView.setText(String.format(Locale.getDefault(), "%d meters (approx.)", result.totalDistance));
 
         // --- Set up Confirm Button ---
         confirmButton.setOnClickListener(v -> {
             Intent navIntent = new Intent(NavigationActivity.this, CompassActivity.class);
-            // Pass the list of JUNCTION IDs for navigation steps
-            navIntent.putStringArrayListExtra("PATH_NODE_IDS", new ArrayList<>(result.nodeIds));
-            // Pass the TRUE final destination ID (which could be a room)
-            navIntent.putExtra("FINAL_DESTINATION_ID", destinationId);
+            // Pass the detailed list of PathLeg objects. ArrayList is Serializable.
+            navIntent.putExtra(EXTRA_PATH_LEGS, new ArrayList<>(result.legs));
             startActivity(navIntent);
         });
     }

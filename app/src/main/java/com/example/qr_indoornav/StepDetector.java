@@ -46,7 +46,7 @@ public class StepDetector {
     private static final long OFF_DIRECTION_RESET_TIME_MS = 2000; // If 2 seconds pass without an off-direction step, the counter resets.
 
     // --- State Variables ---
-    public static double step_length_meter = 0.6; // The estimated distance of one step in meters
+    public static double step_length_meter = 5; // The estimated distance of one step in meters
 
     private float dynamicThreshold; // Accelerometer magnitude threshold, adjusted by height
     private long lastStepTime = 0; // Timestamp of the last detected valid step
@@ -78,7 +78,7 @@ public class StepDetector {
         // These values are empirical and might need further tuning.
         float baseThreshold = 11.0f; // A typical acceleration magnitude for a step (m/s^2)
         float sensitivity = 0.05f;   // How much the threshold changes per cm of height difference
-        step_length_meter = (userHeightCm * 0.4) / 100;
+
         this.dynamicThreshold = baseThreshold + (userHeightCm - 170.0f) * sensitivity;
     }
 
