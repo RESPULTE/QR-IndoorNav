@@ -1,10 +1,12 @@
 #include <opencv2/opencv.hpp>
-
-#include "Guidance.h"
-#include "QRDecoder.h" // NEW: Include our new decoder module
+#include <iostream> // For std::cout
 #include <vector>
 #include <cmath>
 #include <functional>
+#include <algorithm> // For std::sort
+#include "Guidance.h"
+#include "QRDecoder.h"
+
 
 // --- Configuration Constants for easy tuning ---
 // Preprocessing
@@ -35,6 +37,9 @@ const float CENTER_DEAD_ZONE_RATIO = 0.25;
 const double ANGLE_RATIO_TOLERANCE = 0.30; // More tolerant for distorted small codes
 const double DEDUPE_DISTANCE_THRESH = 15.0; // Pixel distance to consider patterns duplicates
 
+
+
+
 struct FinderPattern {
     cv::Point2f center;
     double area;
@@ -44,6 +49,19 @@ struct FinderPattern {
             : center(c), area(a), actual_contour(contour_data) {
     }
 };
+
+// --- NEW HELPER STRUCT FOR GROUPING ---
+// This struct will hold a valid group of 3 finder patterns and their properties.
+struct QRGroup {
+    const FinderPattern* tl; // Top-left corner of the QR code
+    const FinderPattern* bl; // Bottom-left corner
+    const FinderPattern* tr; // Top-right corner
+    double score;            // A measure of how "good" this group is (lower is better)
+
+    QRGroup(const FinderPattern* p1, const FinderPattern* p2, const FinderPattern* p3, double s)
+            : tl(p1), bl(p2), tr(p3), score(s) {}
+};
+
 
 // Preprocessing for the original, standard-sized image
 cv::Mat preprocessImage(const cv::Mat& frame) {
@@ -70,15 +88,12 @@ cv::Mat preprocessPyramid(const cv::Mat& frame) {
     return thresh;
 }
 
-// You might want a specific preprocess for downscaled if block size needs adjustment
-// For simplicity, let's reuse preprocessImage for now, but be aware of block size implications.
+// Special preprocessing for the downscaled image
 cv::Mat preprocessDownscale(const cv::Mat& frame) {
     cv::Mat gray, claheImg, thresh;
     cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
     cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(CLAHE_CLIP_LIMIT, cv::Size(8, 8));
     clahe->apply(gray, claheImg);
-    // Potentially a smaller block size than original if features become very small after downscaling
-    // Or, if features are still large enough, ADAPTIVE_THRESH_BLOCK_SIZE might be fine.
     cv::adaptiveThreshold(claheImg, thresh, 255,
                           cv::ADAPTIVE_THRESH_GAUSSIAN_C,
                           cv::THRESH_BINARY_INV, ADAPTIVE_THRESH_BLOCK_SIZE, ADAPTIVE_THRESH_C);
@@ -115,12 +130,12 @@ std::vector<FinderPattern> findFinderPatterns(const std::vector<std::vector<cv::
     return patterns;
 }
 
-// New function to encapsulate the multi-scale processing logic
+// Encapsulates the multi-scale processing logic
 std::vector<FinderPattern> processFrameForFinderPatterns(
         const cv::Mat& frame,
-        std::function<cv::Mat(const cv::Mat&)> preprocess_func, // Function pointer for preprocessing
+        std::function<cv::Mat(const cv::Mat&)> preprocess_func,
         double min_area,
-        double scale_factor = 1.0 // Default to 1.0 for original scale
+        double scale_factor = 1.0
 ) {
     cv::Mat current_frame = frame;
     if (scale_factor != 1.0) {
@@ -134,11 +149,10 @@ std::vector<FinderPattern> processFrameForFinderPatterns(
 
     std::vector<FinderPattern> patterns = findFinderPatterns(contours, hierarchy, min_area);
 
-    // If we scaled the input frame, we need to scale the detected pattern coordinates back
     if (scale_factor != 1.0) {
         for (auto& p : patterns) {
             p.center /= scale_factor;
-            p.area /= (scale_factor * scale_factor); // Area scales by the square of the factor
+            p.area /= (scale_factor * scale_factor);
             for (auto& point : p.actual_contour) {
                 point.x = static_cast<int>(point.x / scale_factor);
                 point.y = static_cast<int>(point.y / scale_factor);
@@ -149,32 +163,98 @@ std::vector<FinderPattern> processFrameForFinderPatterns(
 }
 
 
+// --- REGENERATED FUNCTION ---
+// This function now filters for valid acute/right-angled groups and selects the best one.
 void provideUserGuidance(cv::Mat& displayFrame, const std::vector<FinderPattern>& patterns) {
     const cv::Point2f frameCenter(displayFrame.cols / 2.0f, displayFrame.rows / 2.0f);
     cv::Point textOrg(10, 30);
 
+    // Initial checks and drawing all found patterns for debugging
     if (patterns.empty()) {
         cv::putText(displayFrame, "No QR Code Found", textOrg, cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 0, 255), 2);
         return;
     }
 
-    double totalArea = 0;
-    for (const auto& p : patterns) totalArea += p.area;
-    double averageArea = totalArea / patterns.size();
-
+    // Draw all detected finder patterns regardless of grouping
     for (const auto& fp : patterns) {
         std::vector<std::vector<cv::Point>> temp_contour_list = { fp.actual_contour };
-        cv::drawContours(displayFrame, temp_contour_list, 0, cv::Scalar(255, 0, 0), 2);
+        cv::drawContours(displayFrame, temp_contour_list, 0, cv::Scalar(255, 0, 0), 2); // Blue for all found
     }
 
-    if (averageArea < MIN_AREA_FOR_GUIDANCE) {
-        cv::putText(displayFrame, "Move Closer", textOrg, cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 165, 255), 2);
+    if (patterns.size() < 3) {
+        cv::putText(displayFrame, "Angle: Need 3 corners", textOrg, cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 165, 255), 2);
         return;
     }
 
-    cv::Point2f qrCenter(0, 0);
-    for (const auto& p : patterns) qrCenter += p.center;
-    qrCenter /= (float)patterns.size();
+    // --- Start of New Grouping and Sorting Logic ---
+    std::vector<QRGroup> valid_groups;
+
+    // 1. Iterate through all combinations of 3 patterns
+    for (size_t i = 0; i < patterns.size(); ++i) {
+        for (size_t j = i + 1; j < patterns.size(); ++j) {
+            for (size_t k = j + 1; k < patterns.size(); ++k) {
+                const FinderPattern* p1 = &patterns[i];
+                const FinderPattern* p2 = &patterns[j];
+                const FinderPattern* p3 = &patterns[k];
+
+                // Calculate squared distances between the centers of the 3 patterns
+                float d12_sq = pow(cv::norm(p1->center - p2->center), 2);
+                float d13_sq = pow(cv::norm(p1->center - p3->center), 2);
+                float d23_sq = pow(cv::norm(p2->center - p3->center), 2);
+
+                // Identify the longest side (hypotenuse) and the other two sides
+                const FinderPattern* tl, * bl, * tr; // Top-Left, Bottom-Left, Top-Right corners
+                float hyp_sq, a_sq, b_sq;
+
+                if (d12_sq > d13_sq && d12_sq > d23_sq) {
+                    hyp_sq = d12_sq; a_sq = d13_sq; b_sq = d23_sq; tl = p3; bl = p2; tr = p1;
+                } else if (d13_sq > d12_sq && d13_sq > d23_sq) {
+                    hyp_sq = d13_sq; a_sq = d12_sq; b_sq = d23_sq; tl = p2; bl = p3; tr = p1;
+                } else {
+                    hyp_sq = d23_sq; a_sq = d12_sq; b_sq = d13_sq; tl = p1; bl = p3; tr = p2;
+                }
+
+                // 2. Filter: Only accept groups that form a right or acute angle.
+                // An obtuse angle would mean a^2 + b^2 < c^2. We discard those.
+                // We add a tolerance to account for perspective distortion.
+                if ((a_sq + b_sq) >= hyp_sq * (1.0 - ANGLE_RATIO_TOLERANCE * 2)) {
+                    // This is a valid group. Calculate its score.
+                    // Score = how close it is to a perfect right angle (lower is better).
+                    double score = std::abs(hyp_sq - (a_sq + b_sq));
+                    valid_groups.emplace_back(tl, bl, tr, score);
+                }
+            }
+        }
+    }
+
+    if (valid_groups.empty()) {
+        cv::putText(displayFrame, "Angle: Invalid shape", textOrg, cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 165, 255), 2);
+        return;
+    }
+
+    // 3. Sort the valid groups by score to find the best one (closest to a right angle)
+    std::sort(valid_groups.begin(), valid_groups.end(), [](const QRGroup& a, const QRGroup& b) {
+        return a.score < b.score;
+    });
+
+    // 4. Select the best group
+    const QRGroup& best_group = valid_groups[0];
+    const FinderPattern* tl = best_group.tl;
+    const FinderPattern* bl = best_group.bl;
+    const FinderPattern* tr = best_group.tr;
+
+    // --- End of New Logic ---
+
+    // Now, perform all guidance calculations using ONLY the 3 patterns from the best group
+    double averageArea = (tl->area + bl->area + tr->area) / 3.0;
+
+    if (averageArea < MIN_AREA_FOR_GUIDANCE) {
+        cv::putText(displayFrame, "Move Closer", textOrg, cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 165, 255), 2);
+        return; // Early exit if too far away, as other guidance is irrelevant
+    }
+
+    // Center guidance based on the center of the best group
+    cv::Point2f qrCenter = (tl->center + bl->center + tr->center) / 3.0f;
     cv::circle(displayFrame, qrCenter, 7, cv::Scalar(255, 0, 255), -1);
 
     cv::Point2f delta = frameCenter - qrCenter;
@@ -182,62 +262,32 @@ void provideUserGuidance(cv::Mat& displayFrame, const std::vector<FinderPattern>
     float deadZoneY = displayFrame.rows * CENTER_DEAD_ZONE_RATIO;
     std::string pos_text = "Position: OK";
 
-    // Prioritize vertical movement (UP/DOWN)
-    if (delta.y > deadZoneY) {
-        pos_text = "Move Camera UP";
-    }
-    else if (delta.y < -deadZoneY) {
-        pos_text = "Move Camera DOWN";
-    }
-        // If vertical position is within the dead zone, then check horizontal movement (LEFT/RIGHT)
-    else if (delta.x > deadZoneX) {
-        pos_text = "Move Camera LEFT";
-    }
-    else if (delta.x < -deadZoneX) {
-        pos_text = "Move Camera RIGHT";
-    }
+    if (delta.y > deadZoneY) pos_text = "Move Camera UP";
+    else if (delta.y < -deadZoneY) pos_text = "Move Camera DOWN";
+    else if (delta.x > deadZoneX) pos_text = "Move Camera LEFT";
+    else if (delta.x < -deadZoneX) pos_text = "Move Camera RIGHT";
 
     cv::putText(displayFrame, pos_text, textOrg, cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
     textOrg.y += 30;
 
-    if (patterns.size() < 3) {
-        cv::putText(displayFrame, "Angle: Need 3 corners", textOrg, cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 165, 255), 2);
-        return;
-    }
+    // Angle guidance for the best group
+    float horz_dist = cv::norm(tr->center - tl->center);
+    float vert_dist = cv::norm(bl->center - tl->center);
+    double ratio = horz_dist / vert_dist;
+    std::string angle_text = "Angle: OK";
 
-    for (size_t i = 0; i < patterns.size(); ++i) {
-        for (size_t j = i + 1; j < patterns.size(); ++j) {
-            for (size_t k = j + 1; k < patterns.size(); ++k) {
-                const FinderPattern* p1 = &patterns[i], * p2 = &patterns[j], * p3 = &patterns[k];
-                float d12_sq = pow(cv::norm(p1->center - p2->center), 2);
-                float d13_sq = pow(cv::norm(p1->center - p3->center), 2);
-                float d23_sq = pow(cv::norm(p2->center - p3->center), 2);
-                const FinderPattern* tl, * bl, * tr;
-                float hyp_sq, a_sq, b_sq;
-                if (d12_sq > d13_sq && d12_sq > d23_sq) { hyp_sq = d12_sq; a_sq = d13_sq; b_sq = d23_sq; tl = p3; bl = p2; tr = p1; }
-                else if (d13_sq > d12_sq && d13_sq > d23_sq) { hyp_sq = d13_sq; a_sq = d12_sq; b_sq = d23_sq; tl = p2; bl = p3; tr = p1; }
-                else { hyp_sq = d23_sq; a_sq = d12_sq; b_sq = d13_sq; tl = p1; bl = p3; tr = p2; }
+    if (ratio > 1.0 + ANGLE_RATIO_TOLERANCE) angle_text = "Rotate Camera RIGHT";
+    else if (ratio < 1.0 - ANGLE_RATIO_TOLERANCE) angle_text = "Rotate Camera LEFT";
 
-                if (std::abs(hyp_sq - (a_sq + b_sq)) / hyp_sq < ANGLE_RATIO_TOLERANCE) {
-                    float horz_dist = cv::norm(tr->center - tl->center);
-                    float vert_dist = cv::norm(bl->center - tl->center);
-                    double ratio = horz_dist / vert_dist;
-                    std::string angle_text = "Angle: OK";
-                    if (ratio > 1.0 + ANGLE_RATIO_TOLERANCE) angle_text = "Rotate Camera RIGHT";
-                    else if (ratio < 1.0 - ANGLE_RATIO_TOLERANCE) angle_text = "Rotate Camera LEFT";
+    cv::putText(displayFrame, angle_text, textOrg, cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
 
-                    cv::putText(displayFrame, angle_text, textOrg, cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
-                    cv::line(displayFrame, tl->center, tr->center, cv::Scalar(255, 255, 0), 3);
-                    cv::line(displayFrame, tl->center, bl->center, cv::Scalar(255, 255, 0), 3);
-                    return;
-                }
-            }
-        }
-    }
+    // Draw lines only for the single best group
+    cv::line(displayFrame, tl->center, tr->center, cv::Scalar(0, 255, 255), 3); // Yellow
+    cv::line(displayFrame, tl->center, bl->center, cv::Scalar(0, 255, 255), 3); // Yellow
 }
 
 
-// --- NEW: This is the main entry point that replaces your old main() function ---
+
 std::string processFrameForGuidance(cv::Mat& frame) {
     if (frame.empty()) return "";
 
@@ -246,7 +296,7 @@ std::string processFrameForGuidance(cv::Mat& frame) {
             frame, preprocessImage, MIN_FINDER_AREA_ORIGINAL);
 
     // 2. If needed, try upscaling
-    if (all_patterns.size() < 2) {
+    if (all_patterns.size() < 3) { // Adjusted to try upscaling if less than 3 are found
         std::vector<FinderPattern> patterns_pyramid_scaled = processFrameForFinderPatterns(
                 frame, preprocessPyramid, MIN_FINDER_AREA_PYRAMID, PYRAMID_SCALE_FACTOR);
         all_patterns.insert(all_patterns.end(), patterns_pyramid_scaled.begin(), patterns_pyramid_scaled.end());
@@ -258,29 +308,41 @@ std::string processFrameForGuidance(cv::Mat& frame) {
         std::vector<bool> taken(all_patterns.size(), false);
         for (size_t i = 0; i < all_patterns.size(); ++i) {
             if (taken[i]) continue;
+            // Select this pattern as the representative for its group
+            FinderPattern representative = all_patterns[i];
+            int count = 1;
+
             for (size_t j = i + 1; j < all_patterns.size(); ++j) {
                 if (taken[j]) continue;
                 if (cv::norm(all_patterns[i].center - all_patterns[j].center) < DEDUPE_DISTANCE_THRESH) {
+                    // Average the properties of duplicate patterns
+                    representative.center += all_patterns[j].center;
+                    representative.area += all_patterns[j].area;
+                    count++;
                     taken[j] = true;
                 }
             }
-            final_patterns.push_back(all_patterns[i]);
+            representative.center /= count;
+            representative.area /= count;
+            final_patterns.push_back(representative);
+            taken[i] = true; // Mark the first one as taken as well
+        }
+    }
+
+    std::string decoded_text = "";
+    // Attempt decoding early if a valid QR shape is likely present
+    if (final_patterns.size() >= 3) {
+        decoded_text = decodeQRCode(frame);
+        if (!decoded_text.empty()) {
+            // If successful, draw a confirmation on the screen
+            cv::Point textOrg(frame.cols / 2 - 100, frame.rows / 2);
+            cv::putText(frame, "DECODED!", textOrg, cv::FONT_HERSHEY_TRIPLEX, 1.5, cv::Scalar(0, 255, 0), 3);
         }
     }
 
     // 4. Provide guidance (draws directly onto the 'frame' Mat)
     provideUserGuidance(frame, final_patterns);
 
-    std::string decoded_text = "";
-    double totalArea = 0;
-    for (const auto& p : final_patterns) totalArea += p.area;
-
-    decoded_text = decodeQRCode(frame);
-    if (!decoded_text.empty()) {
-        // If successful, draw a confirmation on the screen
-        cv::Point textOrg(frame.cols / 2 - 100, frame.rows / 2);
-        cv::putText(frame, "DECODED!", textOrg, cv::FONT_HERSHEY_TRIPLEX, 1.5, cv::Scalar(0, 255, 0), 3);
-    }
-
     return decoded_text;
 }
+
