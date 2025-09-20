@@ -22,6 +22,19 @@ public class Graph {
         return new ArrayList<>(nodes.values());
     }
 
+    // Inside your Graph class
+
+    public Edge findEdgeContainingRoom(String junctionId, String roomId) {
+        Node junction = getNode(junctionId);
+        if (junction != null) {
+            for (Edge edge : junction.getEdges().values()) {
+                if (edge.roomIds.contains(roomId)) {
+                    return edge;
+                }
+            }
+        }
+        return null; // Room not found on any edge connected to this junction
+    }
     public List<String> findShortestPath(String startId, String endId) {
         Map<String, Integer> distances = new HashMap<>();
         Map<String, String> predecessors = new HashMap<>();
