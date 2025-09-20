@@ -13,6 +13,7 @@
     <string name="target_label">Target: %s</string>
     <string name="current_label">Current: %s</string>
     <string name="audio_label">Audio</string>
-    <!-- ADD THIS NEW STRING -->
+
     <string name="steps_remaining_label">Steps Remaining: %d</string>
+    <string name="start_navigation">Start Navigation</string>
 </resources>

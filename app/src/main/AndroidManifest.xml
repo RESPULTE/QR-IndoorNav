@@ -1,23 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-
     <!-- =================== ADD THESE LINES =================== -->
     <!-- Declares that the app needs permission to access the camera. -->
     <uses-permission android:name="android.permission.CAMERA" />
-
-    <!-- Declares that the app uses camera features. required="true" means
-         the app won't be available on devices without a camera. -->
-    <uses-feature android:name="android.hardware.camera" android:required="true" />
-    <!-- ======================================================= -->
-
-
+    <!--
+ Declares that the app uses camera features. required="true" means
+         the app won't be available on devices without a camera.
+    -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="true" /> <!-- ======================================================= -->
     <!-- Your existing uses-permission and uses-feature for sensors -->
-    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION"/>
-    <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="true" />
-    <uses-feature android:name="android.hardware.sensor.compass" android:required="true" />
-    <uses-feature android:name="android.hardware.sensor.stepcounter" android:required="true" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
 
+    <uses-feature
+        android:name="android.hardware.sensor.accelerometer"
+        android:required="true" />
+    <uses-feature
+        android:name="android.hardware.sensor.compass"
+        android:required="true" />
+    <uses-feature
+        android:name="android.hardware.sensor.stepcounter"
+        android:required="true" />
 
     <application
         android:allowBackup="true"
@@ -29,16 +34,19 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Qr_indoornav"
         tools:targetApi="31">
-
-        <!-- Your existing Activity declarations -->
         <activity
-            android:name=".MainActivity"
+            android:name=".StartActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="false" />
+
         <activity
             android:name=".NavigationActivity"
             android:exported="false"
@@ -54,15 +62,12 @@
             android:exported="false"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.Qr_indoornav"
-            tools:ignore="LockedOrientationActivity" />
-
-        <!-- Make sure the QRScannerActivity declaration is here -->
+            tools:ignore="LockedOrientationActivity" /> <!-- Make sure the QRScannerActivity declaration is here -->
         <activity
             android:name=".QRScannerActivity"
             android:exported="false"
             android:screenOrientation="portrait"
             tools:ignore="LockedOrientationActivity" />
-
     </application>
 
 </manifest>

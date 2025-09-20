@@ -1,7 +1,7 @@
 package com.example.qr_indoornav;
 
 import androidx.annotation.Nullable;
-import androidx.appcompat.app.AlertDialog; // Use androidx.appcompat.app.AlertDialog for consistency
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 
@@ -22,7 +22,7 @@ import com.example.qr_indoornav.model.Edge;
 import com.example.qr_indoornav.model.Graph;
 import com.example.qr_indoornav.model.Location;
 import com.example.qr_indoornav.model.MapData;
-import com.example.qr_indoornav.QRParser; // Import the parser
+import com.example.qr_indoornav.QRParser;
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.switchmaterial.SwitchMaterial;
@@ -51,6 +51,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
     private final float[] accelerometerReading = new float[3];
     private final float[] magnetometerReading = new float[3];
     private final float[] rotationMatrix = new float[9];
+    private StepDetector stepDetector; // Handles alignment checks and step counting logic
 
     // --- State Machine for Alignment ---
     private enum AlignmentState { ALIGNING, WAITING_TO_NAVIGATE, FINISHED }
@@ -66,7 +67,6 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
     private float targetDegree; // Compass direction for the current leg
     private int distanceForLegMeters; // Distance for the current leg
     private int stepsTakenInLeg = 0; // Steps accumulated for the current leg (persists between ProgressActivity launches)
-    private static final int DEGREE_MARGIN_OF_ERROR = 5; // Tolerance for compass alignment
 
     private String finalDestinationId; // The absolute final destination (room ID or junction ID)
 
@@ -87,6 +87,8 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
 
         initializeUI();
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        // Initialize the StepDetector. The listener is null because this activity only uses it for alignment checks, not step counting.
+        stepDetector = new StepDetector(null);
         setupNavigationRunnable();
 
         // Basic validation for the received path
@@ -141,7 +143,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
 
     /**
      * Loads the direction and distance for the current segment of the path and updates the UI.
-     * This is called on initial launch and after each successful QR scan.
+     * This is called on initial launch, after a successful QR scan, and when re-aligning.
      */
     private void loadCurrentLegData() {
         // Check if the entire journey is complete (currentLegIndex has advanced past the last junction)
@@ -160,25 +162,20 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         String toNodeId = fullPathLocations.get(currentLegIndex + 1).id;
         Edge currentEdge = graph.getNode(fromNodeId).edges.get(toNodeId);
 
-        // last edge
-        if (currentEdge == null) {
-            // Set the dynamic targets for the current leg
-            targetDegree = lastEdge.directionDegrees;
-            distanceForLegMeters = lastEdge.distanceMeters;
-            stepsTakenInLeg = 0; // Reset steps for the NEW leg when it's initially loaded
-        }
-        else {
-            // Set the dynamic targets for the current leg
-            targetDegree = currentEdge.directionDegrees;
-            distanceForLegMeters = currentEdge.distanceMeters;
-            stepsTakenInLeg = 0; // Reset steps for the NEW leg when it's initially loaded
-        }
+        // Use the 'lastEdge' as a fallback if the edge isn't found (for the final leg)
+        Edge edgeToUse = (currentEdge != null) ? currentEdge : lastEdge;
 
+        // Set the dynamic targets for the current leg
+        targetDegree = edgeToUse.directionDegrees;
+        distanceForLegMeters = edgeToUse.distanceMeters;
+        // NOTE: stepsTakenInLeg is INTENTIONALLY NOT RESET HERE.
+        // It's reset only when a new leg officially starts (see showSuccessDialog).
+        // This preserves progress if the user has to re-align mid-leg.
 
-        // Update UI elements for the new leg
+        // Update UI elements for the current leg
         updateTargetText();
-        updateTimeline(); // Update timeline to show the new 'currentLegIndex'
-        currentState = AlignmentState.ALIGNING; // Reset state to alignment for the new leg
+        updateTimeline();
+        currentState = AlignmentState.ALIGNING;
         instructionTextView.setText("Align for next checkpoint");
     }
 
@@ -315,6 +312,8 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
                     if (isFinished) {
                         finish(); // Finish CompassActivity, go back to MainActivity
                     } else {
+                        // Reset step count for the new leg before loading its data.
+                        stepsTakenInLeg = 0;
                         loadCurrentLegData(); // Load the next leg's data and update UI
                     }
                 })
@@ -413,13 +412,11 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
     }
 
     /**
-     * Checks if the user is currently aligned with the target direction.
+     * Checks if the user is currently aligned with the target direction by delegating to the StepDetector.
      */
     private void checkAlignment(float currentDegree) {
-        float difference = Math.abs(currentDegree - targetDegree);
-        if (difference > 180) difference = 360 - difference; // Get shortest angular difference
-
-        boolean isOnTarget = difference <= DEGREE_MARGIN_OF_ERROR;
+        // Delegate the alignment check to the StepDetector class
+        boolean isOnTarget = stepDetector.isAlignedWithTarget(currentDegree, targetDegree);
 
         if (isOnTarget) {
             compassBackgroundCard.setCardBackgroundColor(ContextCompat.getColor(this, R.color.compass_bg_target_reached));
