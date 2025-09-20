@@ -81,7 +81,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         setContentView(R.layout.activity_compass);
 
         // Load map data and path information passed from NavigationActivity
-        graph = MapData.getGraph(this);
+        graph = MapData.getGraph();
         pathNodeIds = getIntent().getStringArrayListExtra("PATH_NODE_IDS");
         finalDestinationId = getIntent().getStringExtra("FINAL_DESTINATION_ID"); // Store the true final destination
 
@@ -128,10 +128,10 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
     private void buildFullPathLocations(String finalDestinationId) {
         // Convert the list of junction IDs into a list of Location objects for the timeline
         fullPathLocations = pathNodeIds.stream()
-                .map(nodeId -> MapData.getLocationById(this, nodeId))
+                .map(MapData::getLocationById)
                 .collect(Collectors.toList());
 
-        Location finalDestLocation = MapData.getLocationById(this, finalDestinationId);
+        Location finalDestLocation = MapData.getLocationById(finalDestinationId);
         fullPathLocations.add(finalDestLocation);
 
         lastEdge = graph.getNode(pathNodeIds.get(pathNodeIds.size()-2)).edges.get(pathNodeIds.get(pathNodeIds.size()-1));

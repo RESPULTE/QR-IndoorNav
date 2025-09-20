@@ -1,14 +1,6 @@
 package com.example.qr_indoornav.model;
 
-import android.content.Context;
-import android.util.Log; // Import Log for better debugging
-
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
+import android.util.Log;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -18,72 +10,69 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MapData {
-    private static final String TAG = "MapData"; // Tag for logging
+    private static final String TAG = "MapData";
 
+    // Static instances to hold the single, globally accessible map data
     private static Graph graphInstance;
     private static List<Location> allLocations;
     private static Map<String, Location> locationMap;
     private static String currentJunctionId;
 
-    private static void ensureLoaded(Context context) {
-        if (graphInstance == null) {
-            loadMapFromJSON(context);
-        }
+    /**
+     * Resets all static map data. Should be called if a new map needs to be loaded.
+     */
+    public static void reset() {
+        graphInstance = null;
+        allLocations = null;
+        locationMap = null;
+        currentJunctionId = null;
     }
 
-    public static Graph getGraph(Context context) {
-        ensureLoaded(context);
-        return graphInstance;
-    }
+    /**
+     * The new primary method to load and parse all map data from a QR string.
+     * This replaces the old `loadMapFromJSON` method.
+     * @param qrString The complete string data from the scanned junction QR code.
+     */
+    public static void loadMapFromQRString(String qrString) {
+        // Reset previous data before loading a new map
+        reset();
 
-    public static List<Location> getAllLocations(Context context) {
-        ensureLoaded(context);
-        return allLocations;
-    }
-
-    public static Location getLocationById(Context context, String id) {
-        ensureLoaded(context);
-        return locationMap.get(id);
-    }
-
-    public static String getCurrentJunctionId(Context context) {
-        ensureLoaded(context);
-        return currentJunctionId;
-    }
-
-    private static void loadMapFromJSON(Context context) {
         graphInstance = new Graph();
         allLocations = new ArrayList<>();
         locationMap = new HashMap<>();
 
         try {
-            String jsonString = loadJSONFromAsset(context, "map.json");
-            JSONObject json = new JSONObject(jsonString);
-            JSONArray pathsArray = json.getJSONArray("paths");
+            String[] pathEntries = qrString.split(";");
 
-            // --- Pass 1: Discover all nodes and create Node objects ---
-            for (int i = 0; i < pathsArray.length(); i++) {
-                String[] nodeIds = pathsArray.getJSONObject(i).getString("path").split("-");
-                if (graphInstance.getNode(nodeIds[0]) == null) graphInstance.addNode(new Node(nodeIds[0]));
-                if (graphInstance.getNode(nodeIds[1]) == null) graphInstance.addNode(new Node(nodeIds[1]));
+            // --- Pass 1: Discover all nodes to create Node objects ---
+            for (String entry : pathEntries) {
+                String pathPart = entry.split(":")[0]; // "1-2"
+                String[] nodeIds = pathPart.split("-");
+                String fromId = "N" + nodeIds[0];
+                String toId = "N" + nodeIds[1];
+                if (graphInstance.getNode(fromId) == null) graphInstance.addNode(new Node(fromId));
+                if (graphInstance.getNode(toId) == null) graphInstance.addNode(new Node(toId));
             }
-            Log.d(TAG, "Discovered " + graphInstance.getAllNodes().size() + " unique junction nodes.");
-
-            // Set current junction ID from the very first node of the first path
-            currentJunctionId = pathsArray.getJSONObject(0).getString("path").split("-")[0];
+            Log.d(TAG, "Discovered " + graphInstance.getAllNodes().size() + " unique junction nodes from QR string.");
 
             // --- Pass 2: Build edges and create Location objects for rooms ---
-            for (int i = 0; i < pathsArray.length(); i++) {
-                JSONObject pathObject = pathsArray.getJSONObject(i);
-                String[] nodeIds = pathObject.getString("path").split("-");
-                String fromId = nodeIds[0];
-                String toId = nodeIds[1];
-                int distance = pathObject.getInt("dist");
-                float direction = (float) pathObject.getDouble("deg");
-                JSONArray roomsArray = pathObject.getJSONArray("rooms");
+            for (String entry : pathEntries) {
+                String[] parts = entry.split(":");
+                String[] nodeIds = parts[0].split("-");
+                String fromId = "N" + nodeIds[0];
+                String toId = "N" + nodeIds[1];
 
-                List<String> forwardRoomIds = parseRooms(roomsArray);
-                for(String roomId : forwardRoomIds) {
+                String[] details = parts[1].split(",");
+                double distance = Double.parseDouble(details[0]);
+                float direction = Float.parseFloat(details[1]);
+
+                List<String> forwardRoomIds = new ArrayList<>();
+                if (details.length > 2) {
+                    // There are rooms specified for this path
+                    forwardRoomIds = parseRooms(details[2]);
+                }
+
+                for (String roomId : forwardRoomIds) {
                     Location roomLocation = new Location(roomId, "Room " + roomId, fromId);
                     locationMap.put(roomId, roomLocation);
                 }
@@ -91,73 +80,88 @@ public class MapData {
                 List<String> reverseRoomIds = new ArrayList<>(forwardRoomIds);
                 Collections.reverse(reverseRoomIds);
 
-                graphInstance.getNode(fromId).addEdge(toId, distance, direction, forwardRoomIds);
+                graphInstance.getNode(fromId).addEdge(toId, (int) Math.round(distance), direction, forwardRoomIds);
                 float reverseDirection = (direction + 180) % 360;
-                graphInstance.getNode(toId).addEdge(fromId, distance, reverseDirection, reverseRoomIds);
+                graphInstance.getNode(toId).addEdge(fromId, (int) Math.round(distance), reverseDirection, reverseRoomIds);
             }
             Log.d(TAG, "Created " + locationMap.size() + " room locations.");
 
+
             // --- Pass 3: Create Location objects for junctions ---
             for (Node node : graphInstance.getAllNodes()) {
+                // The display name is now simplified, e.g., "Junction N1"
                 Location junctionLocation = new Location(node.id, "Junction " + node.id, node.id);
                 locationMap.put(node.id, junctionLocation);
             }
-            Log.d(TAG, "Total locations (rooms + junctions) in map: " + locationMap.size());
 
-            // --- FIX: COMPILE THE FINAL LIST *AFTER* EVERYTHING IS IN THE MAP ---
+            // --- Final Step: Compile the final list for the dropdown ---
             allLocations = new ArrayList<>(locationMap.values());
             allLocations.sort((l1, l2) -> l1.displayName.compareTo(l2.displayName));
-            Log.d(TAG, "Final sorted list `allLocations` contains: " + allLocations.size() + " items.");
+            Log.d(TAG, "Map data successfully loaded from QR String. Total locations: " + allLocations.size());
 
-        } catch (IOException | JSONException e) {
-            // Make errors loud and clear during development
-            Log.e(TAG, "CRITICAL ERROR: Failed to load or parse map.json. Check file existence and syntax.", e);
-            // In a production app, you might handle this more gracefully. For now, crashing is better than silent failure.
-            throw new RuntimeException("Failed to load map data from assets. See Logcat for details.", e);
+        } catch (Exception e) {
+            Log.e(TAG, "CRITICAL ERROR: Failed to parse QR string map data.", e);
+            reset(); // Clear any partially loaded data
+            throw new RuntimeException("Failed to load map from QR string. See Logcat.", e);
         }
     }
 
-    private static List<String> parseRooms(JSONArray roomsJsonArray) throws JSONException {
+    private static List<String> parseRooms(String roomStr) {
         List<String> roomIds = new ArrayList<>();
-        // Match "N008-N010" or "N1-N3" etc. (same prefix both sides)
+        // This pattern can handle "N008-N010", "A1-A5", etc.
         Pattern rangePattern = Pattern.compile("([A-Za-z]+)(\\d+)-([A-Za-z]+)?(\\d+)");
+        Matcher matcher = rangePattern.matcher(roomStr.trim());
 
-        for (int i = 0; i < roomsJsonArray.length(); i++) {
-            String roomStr = roomsJsonArray.getString(i).trim();
-            Matcher matcher = rangePattern.matcher(roomStr);
+        if (matcher.matches()) {
+            String prefix1 = matcher.group(1);
+            int start = Integer.parseInt(matcher.group(2));
+            String prefix2 = matcher.group(3) != null ? matcher.group(3) : prefix1;
+            int end = Integer.parseInt(matcher.group(4));
 
-            if (matcher.matches()) {
-                String prefix1 = matcher.group(1);
-                int start = Integer.parseInt(matcher.group(2));
-                String prefix2 = matcher.group(3) != null ? matcher.group(3) : prefix1; // fallback
-                int end = Integer.parseInt(matcher.group(4));
-
-                // Only expand if prefixes are the same
-                if (prefix1.equals(prefix2)) {
-                    for (int j = start; j <= end; j++) {
-                        // Preserve zero-padding width from original number
-                        String num = String.format("%0" + matcher.group(2).length() + "d", j);
-                        roomIds.add(prefix1 + num);
-                    }
-                } else {
-                    // Different prefix? Treat whole thing as single room
-                    roomIds.add(roomStr);
+            if (prefix1.equals(prefix2)) {
+                for (int j = start; j <= end; j++) {
+                    String num = String.format("%0" + matcher.group(2).length() + "d", j);
+                    roomIds.add(prefix1 + num);
                 }
             } else {
-                // It's a single room like "C300"
-                roomIds.add(roomStr);
+                roomIds.add(roomStr.trim());
             }
+        } else {
+            roomIds.add(roomStr.trim());
         }
         return roomIds;
     }
 
+    // --- PUBLIC GETTERS (API for the rest of the app) ---
+    // Note: These methods no longer need a Context parameter.
 
-    private static String loadJSONFromAsset(Context context, String fileName) throws IOException {
-        InputStream is = context.getAssets().open(fileName);
-        int size = is.available();
-        byte[] buffer = new byte[size];
-        is.read(buffer);
-        is.close();
-        return new String(buffer, StandardCharsets.UTF_8);
+    private static void checkLoaded() {
+        if (graphInstance == null) {
+            throw new IllegalStateException("MapData has not been loaded. Call loadMapFromQRString() first.");
+        }
+    }
+
+    public static Graph getGraph() {
+        checkLoaded();
+        return graphInstance;
+    }
+
+    public static List<Location> getAllLocations() {
+        checkLoaded();
+        return allLocations;
+    }
+
+    public static Location getLocationById(String id) {
+        checkLoaded();
+        return locationMap.get(id);
+    }
+
+    public static String getCurrentJunctionId() {
+        checkLoaded();
+        return currentJunctionId;
+    }
+
+    public static void setCurrentJunctionId(String id) {
+        currentJunctionId = id;
     }
 }

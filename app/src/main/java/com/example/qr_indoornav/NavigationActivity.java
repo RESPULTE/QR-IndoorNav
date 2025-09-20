@@ -35,8 +35,8 @@ public class NavigationActivity extends AppCompatActivity {
         String originId = intent.getStringExtra("USER_ORIGIN_ID");
         String destinationId = intent.getStringExtra("USER_DESTINATION_ID");
 
-        Location originLoc = MapData.getLocationById(this, originId);
-        Location destLoc = MapData.getLocationById(this, destinationId);
+        Location originLoc = MapData.getLocationById(originId);
+        Location destLoc = MapData.getLocationById(destinationId);
 
         if (originLoc == null || destLoc == null) {
             return;
@@ -46,7 +46,7 @@ public class NavigationActivity extends AppCompatActivity {
         String endJunctionId = destLoc.parentJunctionId;
         boolean isRoomDestination = !destLoc.id.equals(endJunctionId);
 
-        Graph graph = MapData.getGraph(this);
+        Graph graph = MapData.getGraph();
         List<String> pathNodeIds;
 
         // --- REWRITTEN PATH PLANNING ---
