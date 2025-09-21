@@ -69,7 +69,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
 
     // --- TTS Guidance State ---
     private long lastTtsGuidanceTime = 0;
-    private static final long TTS_GUIDANCE_INTERVAL = 3000;
+    private static final long TTS_GUIDANCE_INTERVAL = 1700;
     private boolean hasAnnouncedAlignment = false;
     private boolean justReturnedFromDeviation = false;
 

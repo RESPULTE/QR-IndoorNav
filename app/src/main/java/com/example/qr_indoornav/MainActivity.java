@@ -148,7 +148,7 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }, 3000);
 
-                TtsManager.speak("sorry, please repeat");
+//                TtsManager.speak("sorry, please repeat");
             }
 
             @Override

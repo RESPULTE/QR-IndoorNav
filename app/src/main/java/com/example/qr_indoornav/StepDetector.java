@@ -77,7 +77,7 @@ public class StepDetector {
         this.dynamicThreshold = baseThreshold + (userHeightCm - 170.0f) * sensitivity;
 
         // Calibrate average step length (a common estimate is height * 0.414)
-        this.AVERAGE_STEP_LENGTH_METERS = (userHeightCm / 100.0f) * 0.414f;
+        this.AVERAGE_STEP_LENGTH_METERS = (userHeightCm / 100.0f) * 0.38f;
     }
 
     /**

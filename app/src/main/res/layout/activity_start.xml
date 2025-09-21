@@ -9,8 +9,8 @@
 
     <ImageButton
         android:id="@+id/playButton"
-        android:layout_width="150dp"
-        android:layout_height="150dp"
+        android:layout_width="250dp"
+        android:layout_height="250dp"
         android:background="@drawable/blue_circle_background"
         android:contentDescription="@string/start_navigation"
         android:elevation="8dp"

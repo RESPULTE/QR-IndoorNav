@@ -241,9 +241,9 @@ std::string provideUserGuidance(cv::Mat& displayFrame, const std::vector<FinderP
             float deadZoneX = displayFrame.cols * 0.20f; // 20% dead zone from each side
 
             if (patterns_center_x < frameCenter.x - deadZoneX) {
-                guidance_text = "Move Camera LEFT";
+                guidance_text = "Move LEFT";
             } else if (patterns_center_x > frameCenter.x + deadZoneX) {
-                guidance_text = "Move Camera RIGHT";
+                guidance_text = "Move RIGHT";
             }
 
             if (!guidance_text.empty()){
