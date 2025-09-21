@@ -174,7 +174,7 @@ public class PathFinder {
                 int fromIndex = isFromRoom ? forwardEdge.roomIds.indexOf(fromId) : (fromId.equals(endpoints.first) ? -1 : 999);
                 int toIndex = isToRoom ? forwardEdge.roomIds.indexOf(toId) : (toId.equals(endpoints.first) ? -1 : 999);
                 // If traveling from a lower index to a higher index (or from J1 to anything), use forward direction.
-                if (fromIndex > toIndex) {
+                if (forwardEdge.toNodeId.equals(toId)) {
                     direction = forwardEdge.directionDegrees;
                 } else { // Otherwise, use reverse direction.
                     direction = (forwardEdge.directionDegrees + 180) % 360;

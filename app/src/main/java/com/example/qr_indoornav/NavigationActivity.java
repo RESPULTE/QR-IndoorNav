@@ -42,6 +42,7 @@ public class NavigationActivity extends AppCompatActivity {
             return;
         }
 
+
         Graph graph = MapData.getGraph();
 
         // Use the Pathfinder to get the detailed path legs.
