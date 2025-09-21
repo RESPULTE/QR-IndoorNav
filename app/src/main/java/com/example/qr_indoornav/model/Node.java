@@ -13,7 +13,7 @@ public class Node {
         this.id = id;
     }
 
-    public void addEdge(String toNodeId, int distanceMeters, float direction, List<String> roomIds) {
+    public void addEdge(String toNodeId, float distanceMeters, float direction, List<String> roomIds) {
         edges.put(toNodeId, new Edge(id + "-" + toNodeId, toNodeId, distanceMeters, direction, roomIds));
     }
 

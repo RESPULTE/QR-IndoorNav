@@ -62,6 +62,7 @@ public class NavigationActivity extends AppCompatActivity {
                 pathNodeIds.add(leg.toId); // Add the destination of each leg
             }
         }
+
         mapView.setData(graph, pathNodeIds, destinationId);
         distanceTextView.setText(String.format(Locale.getDefault(), "%d meters (approx.)", result.totalDistance));
 

@@ -20,6 +20,7 @@ import android.os.Looper;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
+import android.util.Log;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -437,6 +438,7 @@ public class CompassActivity extends AppCompatActivity implements SensorEventLis
         navigationRunnable = () -> {
             if (currentState == AlignmentState.WAITING_TO_NAVIGATE) {
                 PathFinder.PathLeg currentLeg = pathLegs.get(currentLegIndex);
+
                 Intent intent = new Intent(CompassActivity.this, ProgressActivity.class);
                 intent.putExtra(ProgressActivity.EXTRA_TARGET_DEGREE, currentLeg.direction);
                 intent.putExtra(ProgressActivity.EXTRA_DISTANCE_METERS, currentLeg.distance);

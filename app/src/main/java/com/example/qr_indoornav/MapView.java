@@ -6,6 +6,7 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.PointF;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.View;
 import androidx.annotation.Nullable;
 import com.example.qr_indoornav.model.Edge;
@@ -30,6 +31,10 @@ public class MapView extends View {
     private final float nodeRadius = 30f;
     private final float roomMarkerRadius = 15f;
     private final float viewPadding = 80f;
+
+    // --- NEW: Minimum desired pixel distance between the centers of two nodes ---
+    private static final float MIN_NODE_DISTANCE_PIXELS = 150f;
+
 
     // --- Dynamic Data ---
     private Graph graph;
@@ -177,9 +182,6 @@ public class MapView extends View {
         }
 
         // --- Step 1: Calculate Relative Positions for JUNCTIONS using BFS ---
-        // The map layout must be consistent, regardless of the user's path.
-        // To achieve this, we always start the layout calculation from a fixed, deterministic node.
-        // Here, we choose the junction with the lexicographically smallest ID as the "root" of our map.
         Map<String, PointF> relativeCoords = new HashMap<>();
         Queue<String> queue = new ArrayDeque<>();
         Set<String> visited = new HashSet<>();
@@ -189,10 +191,7 @@ public class MapView extends View {
                 .min(String::compareTo)
                 .orElse(null);
 
-        // If for some reason no root node can be found, abort.
-        if (layoutRootNodeId == null) {
-            return;
-        }
+        if (layoutRootNodeId == null) return;
 
         queue.add(layoutRootNodeId);
         visited.add(layoutRootNodeId);
@@ -218,7 +217,17 @@ public class MapView extends View {
             }
         }
 
-        // --- Step 2 & 3: Find Bounding Box and Scale Factor (Unchanged) ---
+        // Handle trivial case of one or zero nodes
+        if (relativeCoords.size() < 2) {
+            nodeCoordinates.clear();
+            if (!relativeCoords.isEmpty()) {
+                nodeCoordinates.put(layoutRootNodeId, new PointF(getWidth() / 2f, getHeight() / 2f));
+            }
+            calculateRoomCoordinates(); // Will be empty but good practice
+            return;
+        }
+
+        // --- Step 2: Find Bounding Box and Dimensions of Relative Coordinates ---
         float minX = Float.MAX_VALUE, maxX = Float.MIN_VALUE, minY = Float.MAX_VALUE, maxY = Float.MIN_VALUE;
         for (PointF pos : relativeCoords.values()) {
             minX = Math.min(minX, pos.x);
@@ -228,25 +237,62 @@ public class MapView extends View {
         }
         float graphWidth = maxX - minX;
         float graphHeight = maxY - minY;
-        if (graphWidth < 1) graphWidth = 1;
-        if (graphHeight < 1) graphHeight = 1;
+        if (graphWidth < 0.1f) graphWidth = 0.1f;
+        if (graphHeight < 0.1f) graphHeight = 0.1f;
 
+        // --- Step 3: Determine the Optimal Scale Factor ---
         float availableWidth = getWidth() - (2 * viewPadding);
         float availableHeight = getHeight() - (2 * viewPadding);
-        float scale = Math.min(availableWidth / graphWidth, availableHeight / graphHeight);
+
+        // a) Calculate the scale required to make the entire graph fit within the view.
+        float scaleToFit = Math.min(availableWidth / graphWidth, availableHeight / graphHeight);
+
+        // b) Calculate the scale required to enforce the minimum distance between the two closest nodes.
+        float minRelativeDist = Float.MAX_VALUE;
+        List<PointF> points = new ArrayList<>(relativeCoords.values());
+        for (int i = 0; i < points.size(); i++) {
+            for (int j = i + 1; j < points.size(); j++) {
+                PointF p1 = points.get(i);
+                PointF p2 = points.get(j);
+                float dist = (float) Math.hypot(p1.x - p2.x, p1.y - p2.y);
+                minRelativeDist = Math.min(minRelativeDist, dist);
+            }
+        }
+
+        float scaleForMinDist = Float.MAX_VALUE;
+        Log.i("aaaaaa", "calculateNodeCoordinates: " + minRelativeDist);
+        if (minRelativeDist > 0.001f) {
+            scaleForMinDist = MIN_NODE_DISTANCE_PIXELS / minRelativeDist;
+        }
+
+        // c) The final scale is the SMALLER of the two, ensuring it's both readable and fits on screen.
+        float finalScale = Math.min(scaleToFit, scaleForMinDist);
+
+        // --- Step 4: Calculate Centering Offsets ---
+        float scaledGraphWidth = graphWidth * finalScale;
+        float scaledGraphHeight = graphHeight * finalScale;
+        float offsetX = (availableWidth - scaledGraphWidth) / 2f;
+        float offsetY = (availableHeight - scaledGraphHeight) / 2f;
 
 
-        // --- Step 4: Calculate Final On-Screen Coordinates for JUNCTIONS ---
+        // --- Step 5: Calculate Final On-Screen Coordinates for JUNCTIONS ---
         nodeCoordinates.clear();
         for (Map.Entry<String, PointF> entry : relativeCoords.entrySet()) {
             PointF relPos = entry.getValue();
-            float screenX = viewPadding + (relPos.x - minX) * scale;
-            float screenY = viewPadding + (relPos.y - minY) * scale;
+            // Apply scale, padding, and centering offset
+            float screenX = viewPadding + offsetX + (relPos.x - minX) * finalScale;
+            float screenY = viewPadding + offsetY + (relPos.y - minY) * finalScale;
             nodeCoordinates.put(entry.getKey(), new PointF(screenX, screenY));
         }
 
-        // --- Step 5: Calculate Screen Coordinates for ALL Rooms via Interpolation ---
+        // --- Step 6: Calculate Screen Coordinates for ALL Rooms based on Junctions ---
+        calculateRoomCoordinates();
+    }
+
+    private void calculateRoomCoordinates() {
         roomCoordinates.clear();
+        if (graph == null) return;
+
         Set<String> drawnEdges = new HashSet<>();
         for (Node junction : graph.getAllNodes()) {
             for (Edge edge : junction.getEdges().values()) {
@@ -273,6 +319,7 @@ public class MapView extends View {
             }
         }
     }
+
 
     // --- Drawing helper methods (Unchanged) ---
     private void drawEdge(Canvas canvas, String fromId, String toId, Paint paint) {

@@ -37,11 +37,11 @@ public class StepDetector {
     private static final float DEFAULT_USER_HEIGHT_CM = 175.0f;
 
     // --- REFINED STEP DETECTION CONSTANTS ---
-    private static final long STEP_TIME_GATE_MS = 300; // Time between steps. Can be faster than the old value.
-    private static final float STEP_DETECTION_LOWER_THRESHOLD_FACTOR = 0.9f;
+    private static final long STEP_TIME_GATE_MS = 250; // Time between steps. Can be faster than the old value.
+    private static final float STEP_DETECTION_LOWER_THRESHOLD_FACTOR = 1.4f;
 
     // --- DEAD RECKONING & DIRECTIONAL CONSTANTS ---
-    private static final int ALIGNMENT_DEGREE_MARGIN = 20;
+    private static final int ALIGNMENT_DEGREE_MARGIN = 30;
     // A step is considered "forward" if it's within 90 degrees of the target. Beyond that, it's sideways or backward.
     private static final int MOVEMENT_DIRECTION_MARGIN_DEGREES = 90;
     // The maximum allowed distance (in meters) between the user's actual and ideal path before recalibration is advised.
@@ -56,11 +56,6 @@ public class StepDetector {
     // --- NEW Dead Reckoning State Variables ---
     public static float AVERAGE_STEP_LENGTH_METERS;
     // The user's actual estimated position, updated with each step's real direction.
-    private double currentUserX = 0;
-    private double currentUserY = 0;
-    // The user's ideal position, assuming they walked perfectly straight.
-    private double idealUserX = 0;
-    private double idealUserY = 0;
 
     /**
      * Constructor for the StepDetector.
@@ -156,42 +151,15 @@ public class StepDetector {
             lastStepTime = System.currentTimeMillis();
             stepsTaken++;
 
-            // --- Update Ideal Position (perfect path) ---
-            double targetDirectionRad = Math.toRadians(targetDirection);
-            idealUserX += AVERAGE_STEP_LENGTH_METERS * Math.sin(targetDirectionRad);
-            idealUserY += AVERAGE_STEP_LENGTH_METERS * Math.cos(targetDirectionRad);
-
-            // --- Update Current Position (actual path) ---
-            currentUserX += AVERAGE_STEP_LENGTH_METERS * Math.sin(movementAzimuthRad);
-            currentUserY += AVERAGE_STEP_LENGTH_METERS * Math.cos(movementAzimuthRad);
-
             if (listener != null) {
                 listener.onStep(stepsTaken);
             }
         }
         // If the step was not "forward" (e.g., sideways or backward), we simply ignore it.
-        // It does not contribute to forward progress or error accumulation.
+        // It does not contribute to forward* progress or error accumulation.
     }
 
-    /**
-     * Checks if the accumulated distance error between the user's actual path and the
-     * ideal path has exceeded the tolerance threshold.
-     * @return true if the user has drifted too far and should be prompted to realign.
-     */
-    public boolean needsRealignment() {
-        return getAccumulatedError() > REALIGNMENT_DISTANCE_THRESHOLD_METERS;
-    }
 
-    /**
-     * Calculates the straight-line distance between the user's current estimated position
-     * and their ideal position.
-     * @return The error distance in meters.
-     */
-    public double getAccumulatedError() {
-        double dx = currentUserX - idealUserX;
-        double dy = currentUserY - idealUserY;
-        return Math.sqrt(dx * dx + dy * dy);
-    }
 
     /**
      * Resets the dead reckoning system to start a new navigation leg.
@@ -201,10 +169,6 @@ public class StepDetector {
         this.stepsTaken = initialSteps;
         this.lastStepTime = 0;
         this.isPeakDetected = false;
-        this.currentUserX = 0;
-        this.currentUserY = 0;
-        this.idealUserX = 0;
-        this.idealUserY = 0;
     }
 
     /**

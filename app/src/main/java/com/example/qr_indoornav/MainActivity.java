@@ -148,7 +148,7 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }, 3000);
 
-                TtsManager.speak("what the fuck u say.");
+                TtsManager.speak("sorry, please repeat");
             }
 
             @Override
@@ -266,8 +266,6 @@ public class MainActivity extends AppCompatActivity {
                 .trim()
                 .toLowerCase();
 
-        bestVoiceResult = convertWordsToNumbers(bestVoiceResult);
-
         List<Location> potentialMatches = new ArrayList<>();
         List<Location> allLocations = MapData.getAllLocations();
 
@@ -296,18 +294,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private String convertWordsToNumbers(String input) {
-        Map<String, String> numberMap = new HashMap<>();
-        numberMap.put("zero", "0"); numberMap.put("one", "1"); numberMap.put("two", "2");
-        numberMap.put("three", "3"); numberMap.put("four", "4"); numberMap.put("five", "5");
-        numberMap.put("six", "6"); numberMap.put("seven", "7"); numberMap.put("eight", "8");
-        numberMap.put("nine", "9"); numberMap.put("ten", "10");
-
-        for (Map.Entry<String, String> entry : numberMap.entrySet()) {
-            input = input.replaceAll("\\b" + entry.getKey() + "\\b", entry.getValue());
-        }
-        return input;
-    }
 
     public static String getErrorText(int errorCode) {
         switch (errorCode) {

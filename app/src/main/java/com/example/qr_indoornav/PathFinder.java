@@ -2,6 +2,9 @@ package com.example.qr_indoornav;
 
 import android.util.Log;
 import android.util.Pair;
+
+import androidx.annotation.NonNull;
+
 import com.example.qr_indoornav.model.Edge;
 import com.example.qr_indoornav.model.Graph;
 import com.example.qr_indoornav.model.Node;
@@ -26,13 +29,19 @@ public class PathFinder {
         public final String fromId;
         public final String toId;
         public final float direction;
-        public final int distance;
+        public final float distance;
 
-        public PathLeg(String fromId, String toId, float direction, int distance) {
+        public PathLeg(String fromId, String toId, float direction, float distance) {
             this.fromId = fromId;
             this.toId = toId;
             this.direction = direction;
             this.distance = distance;
+        }
+
+        @NonNull
+        @Override
+        public String toString() {
+            return super.toString() + "fromID: " + fromId + " | toId: " + toId + " | direction: " + direction + " | distance: " + distance;
         }
     }
 
@@ -68,11 +77,12 @@ public class PathFinder {
         // --- Step 2: Convert the sequence of IDs into a list of detailed PathLegs ---
         List<PathLeg> pathLegs = new ArrayList<>();
         int totalDistance = 0;
-
+        Log.i(TAG, "findPath: " + optimalNodePath);
         for (int i = 0; i < optimalNodePath.size() - 1; i++) {
             String fromId = optimalNodePath.get(i);
             String toId = optimalNodePath.get(i + 1);
             PathLeg leg = createNavigationLeg(graph, fromId, toId);
+            Log.i(TAG, "findPath: " + leg.fromId + " to " + leg.toId + " distance: " + leg.distance);
             if (leg != null) {
                 pathLegs.add(leg);
                 totalDistance += leg.distance;
@@ -108,19 +118,19 @@ public class PathFinder {
         }
 
         // General case: Find best path via anchor points
-        Map<String, Integer> originAnchors = getAnchorPoints(graph, originId);
-        Map<String, Integer> destAnchors = getAnchorPoints(graph, destinationId);
+        Map<String, Float> originAnchors = getAnchorPoints(graph, originId);
+        Map<String, Float> destAnchors = getAnchorPoints(graph, destinationId);
 
-        int minTotalDistance = Integer.MAX_VALUE;
+        float minTotalDistance = Float.MAX_VALUE;
         List<String> bestJunctionPath = null;
 
-        for (Map.Entry<String, Integer> originAnchor : originAnchors.entrySet()) {
-            for (Map.Entry<String, Integer> destAnchor : destAnchors.entrySet()) {
+        for (Map.Entry<String, Float> originAnchor : originAnchors.entrySet()) {
+            for (Map.Entry<String, Float> destAnchor : destAnchors.entrySet()) {
                 List<String> junctionPath = graph.findShortestPath(originAnchor.getKey(), destAnchor.getKey());
                 if (junctionPath.isEmpty() && !originAnchor.getKey().equals(destAnchor.getKey())) continue;
 
                 int junctionPathDistance = calculateJunctionPathDistance(graph, junctionPath);
-                int totalDistance = originAnchor.getValue() + junctionPathDistance + destAnchor.getValue();
+                Float totalDistance = originAnchor.getValue() + junctionPathDistance + destAnchor.getValue();
 
                 if (totalDistance < minTotalDistance) {
                     minTotalDistance = totalDistance;
@@ -146,7 +156,7 @@ public class PathFinder {
     private static PathLeg createNavigationLeg(Graph graph, String fromId, String toId) {
         boolean isFromRoom = graph.getNode(fromId) == null;
         boolean isToRoom = graph.getNode(toId) == null;
-        int distance = calculatePartialDistance(graph, fromId, toId);
+        float distance = calculatePartialDistance(graph, fromId, toId);
 
         // Case 1: Junction -> Junction
         if (!isFromRoom && !isToRoom) {
@@ -163,13 +173,16 @@ public class PathFinder {
                 float direction;
                 int fromIndex = isFromRoom ? forwardEdge.roomIds.indexOf(fromId) : (fromId.equals(endpoints.first) ? -1 : 999);
                 int toIndex = isToRoom ? forwardEdge.roomIds.indexOf(toId) : (toId.equals(endpoints.first) ? -1 : 999);
-
                 // If traveling from a lower index to a higher index (or from J1 to anything), use forward direction.
-                if (fromIndex < toIndex) {
+                if (fromIndex > toIndex) {
                     direction = forwardEdge.directionDegrees;
                 } else { // Otherwise, use reverse direction.
                     direction = (forwardEdge.directionDegrees + 180) % 360;
                 }
+                Log.d(TAG, "createNavigationLeg: from index" + fromId + " to index: " + toId + " direction: " + direction);
+                Log.d(TAG, "createNavigationLeg: from index" + forwardEdge.roomIds + " to direction: " + forwardEdge.directionDegrees);
+
+
                 return new PathLeg(fromId, toId, direction, distance);
             }
         }
@@ -179,7 +192,7 @@ public class PathFinder {
     /**
      * Universal distance calculator between any two points (rooms or junctions) on the same edge.
      */
-    private static int calculatePartialDistance(Graph graph, String locA, String locB) {
+    private static float calculatePartialDistance(Graph graph, String locA, String locB) {
         boolean isARoom = graph.getNode(locA) == null;
         boolean isBRoom = graph.getNode(locB) == null;
 
@@ -207,16 +220,16 @@ public class PathFinder {
     }
 
     // --- Unchanged Helper Methods from previous version ---
-    private static Map<String, Integer> getAnchorPoints(Graph graph, String locationId) {
-        Map<String, Integer> anchors = new HashMap<>();
+    private static Map<String, Float> getAnchorPoints(Graph graph, String locationId) {
+        Map<String, Float> anchors = new HashMap<>();
         if (graph.getNode(locationId) != null) {
-            anchors.put(locationId, 0);
+            anchors.put(locationId, 0.0f);
             return anchors;
         }
         Pair<String, String> endpoints = findEndpointJunctionsForRoom(graph, locationId);
         if (endpoints != null) {
-            int distToA = calculatePartialDistance(graph, locationId, endpoints.first);
-            int distToB = calculatePartialDistance(graph, locationId, endpoints.second);
+            float distToA = calculatePartialDistance(graph, locationId, endpoints.first);
+            float distToB = calculatePartialDistance(graph, locationId, endpoints.second);
             anchors.put(endpoints.first, distToA);
             anchors.put(endpoints.second, distToB);
         }

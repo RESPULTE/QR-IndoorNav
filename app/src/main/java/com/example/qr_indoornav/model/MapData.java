@@ -96,13 +96,15 @@ public class MapData {
                 String fromJunctionId = charToJunctionId(details[0].charAt(0));
                 String toJunctionId = charToJunctionId(details[0].charAt(1));
 
-                int totalDistance = Integer.parseInt(details[1]);
-                float direction = Float.parseFloat(details[2]);
+                float totalDistance = Float.parseFloat(details[1]) / 10.0f;
+                float direction = Integer.parseInt(details[2]);
 
                 List<String> roomIdsOnPath = new ArrayList<>();
                 if (details.length > 3) {
                     roomIdsOnPath = parseRoomRange(details[3]);
                 }
+                Log.d(TAG, "loadMapFromQRString: " + details[0] + details[1] + details[2]);
+                Log.d(TAG, "loadMapFromQRString: " + toJunctionId + "   " + fromJunctionId + "   " + totalDistance + "   " + direction + "   " + roomIdsOnPath);
 
                 graphInstance.getNode(fromJunctionId).addEdge(toJunctionId, totalDistance, direction, roomIdsOnPath);
                 float reverseDirection = (direction + 180) % 360;

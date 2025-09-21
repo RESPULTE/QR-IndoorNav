@@ -36,15 +36,15 @@ public class Graph {
         return null; // Room not found on any edge connected to this junction
     }
     public List<String> findShortestPath(String startId, String endId) {
-        Map<String, Integer> distances = new HashMap<>();
+        Map<String, Float> distances = new HashMap<>();
         Map<String, String> predecessors = new HashMap<>();
         PriorityQueue<Node> queue = new PriorityQueue<>((n1, n2) ->
-                Integer.compare(distances.get(n1.id), distances.get(n2.id)));
+                Float.compare(distances.get(n1.id), distances.get(n2.id)));
 
         for (String nodeId : nodes.keySet()) {
-            distances.put(nodeId, Integer.MAX_VALUE);
+            distances.put(nodeId, Float.MAX_VALUE);
         }
-        distances.put(startId, 0);
+        distances.put(startId, 0.0f);
         queue.add(nodes.get(startId));
 
         while (!queue.isEmpty()) {
@@ -53,7 +53,7 @@ public class Graph {
 
             for (Edge edge : current.edges.values()) {
                 // Use distanceMeters as the weight for the pathfinding algorithm
-                int newDist = distances.get(current.id) + edge.distanceMeters;
+                float newDist = distances.get(current.id) + edge.distanceMeters;
                 if (newDist < distances.get(edge.toNodeId)) {
                     distances.put(edge.toNodeId, newDist);
                     predecessors.put(edge.toNodeId, current.id);

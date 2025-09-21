@@ -8,6 +8,8 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.media.AudioAttributes;
+import android.media.SoundPool;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -45,10 +47,13 @@ public class ProgressActivity extends AppCompatActivity implements SensorEventLi
 
     // --- Navigation variables ---
     private float targetDegree;
-    private int totalDistanceMeters;
+    private float totalDistanceMeters;
     private int totalStepsForLeg; // --- NEW: Calculate total steps for this leg
-    private static final int ALIGNMENT_MARGIN_OF_ERROR = 15;
+    private static final int ALIGNMENT_MARGIN_OF_ERROR = 40;
     private StepDetector stepDetector;
+
+    private SoundPool soundPool;
+    private int dingSoundId;
 
     // --- NEW: TTS State Tracking ---
     private boolean hasAnnouncedHalfway = false;
@@ -73,6 +78,18 @@ public class ProgressActivity extends AppCompatActivity implements SensorEventLi
 
         updateProgressUI();
         startDotsAnimation();
+
+        // Setup SoundPool for success ding
+        AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build();
+        soundPool = new SoundPool.Builder()
+                .setMaxStreams(1)
+                .setAudioAttributes(audioAttributes)
+                .build();
+
+        dingSoundId = soundPool.load(this, R.raw.wrong, 1);
     }
 
     private void initializeUI() {
@@ -88,7 +105,7 @@ public class ProgressActivity extends AppCompatActivity implements SensorEventLi
     private void loadIntentData() {
         Intent intent = getIntent();
         targetDegree = intent.getFloatExtra(EXTRA_TARGET_DEGREE, 0f);
-        totalDistanceMeters = intent.getIntExtra(EXTRA_DISTANCE_METERS, 30);
+        totalDistanceMeters = intent.getFloatExtra(EXTRA_DISTANCE_METERS, 0f);
         int initialSteps = intent.getIntExtra(EXTRA_INITIAL_STEPS, 0);
 
         // --- NEW: Calculate total steps for this leg and announce it ---
@@ -237,6 +254,8 @@ public class ProgressActivity extends AppCompatActivity implements SensorEventLi
         if (resultCode == RESULT_OK) {
             Toast.makeText(this, "Leg completed!", Toast.LENGTH_SHORT).show();
         } else if (resultCode == RESULT_CANCELED) {
+            TtsManager.speak("Oops! Direction deviated");
+            soundPool.play(dingSoundId, 1, 1, 0, 0, 1);
             Toast.makeText(this, "Direction deviated!", Toast.LENGTH_SHORT).show();
         }
 
