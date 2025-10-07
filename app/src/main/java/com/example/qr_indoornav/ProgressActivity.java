@@ -94,7 +94,7 @@ public class ProgressActivity extends AppCompatActivity implements SensorEventLi
                 .setAudioAttributes(audioAttributes)
                 .build();
 
-        dingSoundId = soundPool.load(this, R.raw.wrong, 1);
+        dingSoundId = soundPool.load(this, R.raw.ding, 1);
     }
 
     private void initializeUI() {

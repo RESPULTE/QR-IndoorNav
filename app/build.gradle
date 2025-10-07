@@ -19,7 +19,7 @@ android {
             cmake {
                 // Point to the location of your unzipped OpenCV SDK
                 // Use forward slashes, even on Windows
-                arguments "-DOpenCV_DIR=C:/OpenCV-android-sdk/sdk/native/jni"
+                arguments "-DOpenCV_DIR= [your opencv folder directory]/sdk/native/jni"
                 cppFlags "-std=c++17" // Use a modern C++ standard
             }
 
@@ -50,7 +50,7 @@ android {
 
     sourceSets {
         main {
-            jniLibs.srcDirs = ["C:/OpenCV-android-sdk/sdk/native/libs"]
+            jniLibs.srcDirs = ["[your opencv folder directory]/sdk/native/libs"]
         }
     }
 }
