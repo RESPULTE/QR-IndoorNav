@@ -1,6 +1,11 @@
 #include <opencv2/opencv.hpp>
 #include <iostream>
 
+// ---------------------------------
+// Done by: Lau Yue Jie
+// --------------------------------
+
+
 using namespace cv;
 using namespace std;
 

@@ -2,6 +2,11 @@ package com.example.qr_indoornav;
 
 import android.util.Log;
 
+// ---------------------------------
+// Done by: Lim Yeu Chuan
+// --------------------------------
+
+
 public class QRParser {
 
     private static final String TAG = "QRParser";

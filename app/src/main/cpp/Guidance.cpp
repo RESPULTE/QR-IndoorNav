@@ -7,6 +7,12 @@
 #include <chrono>    // <-- ADDED for time tracking
 #include "Guidance.h"
 #include "QRDecoder.h"
+
+// ---------------------------------
+// Done by: Lim Yeu Chuan
+// --------------------------------
+
+
 // --- Configuration Constants for easy tuning ---
 // Preprocessing
 const int ADAPTIVE_THRESH_BLOCK_SIZE = 11; // Smaller for finer details
@@ -20,10 +26,11 @@ const double MAX_DECODING_AREA = 200000.0;
 
 // Finder Pattern Validation
 const double MIN_FINDER_AREA_ORIGINAL = 25.0; // Lowered to catch very small patterns
-const double PYRAMID_SCALE_FACTOR = 2.0; // For upscaling (detects small codes)
+const double SCALE_FACTOR = 2.0; // For upscaling (detects small codes)
+
 
 // Adjusted for scale - you might need to tune these more
-const double MIN_FINDER_AREA_PYRAMID = MIN_FINDER_AREA_ORIGINAL * (PYRAMID_SCALE_FACTOR / 1.5);
+const double MIN_FINDER_AREA_PYRAMID = MIN_FINDER_AREA_ORIGINAL * (SCALE_FACTOR / 1.5);
 
 const double FINDER_SQUARE_TOLERANCE = 0.45; // Slightly more tolerant for aliasing
 const double FINDER_AREA_RATIO_TOLERANCE = 0.6;
@@ -32,7 +39,6 @@ const double FINDER_AREA_RATIO_TOLERANCE = 0.6;
 const double MIN_AREA_FOR_GUIDANCE = 45.0; // Increased threshold to ask user to move closer sooner
 const float CENTER_DEAD_ZONE_RATIO = 0.25;
 const double ANGLE_RATIO_TOLERANCE = 0.30; // More tolerant for distorted small codes
-const double DEDUPE_DISTANCE_THRESH = 15.0; // Pixel distance to consider patterns duplicates
 
 
 
@@ -59,19 +65,7 @@ struct QRGroup {
 
 // --- OPTIMIZED PREPROCESSING FUNCTIONS ---
 // They now accept a grayscale image and reuse a static CLAHE object.
-
 cv::Mat preprocessImage(const cv::Mat& gray) {
-    // OPTIMIZATION: Create CLAHE object only once and reuse it.
-    static cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(CLAHE_CLIP_LIMIT, cv::Size(8, 8));
-    cv::Mat claheImg, thresh;
-    clahe->apply(gray, claheImg);
-    cv::adaptiveThreshold(claheImg, thresh, 255,
-                          cv::ADAPTIVE_THRESH_GAUSSIAN_C,
-                          cv::THRESH_BINARY_INV, ADAPTIVE_THRESH_BLOCK_SIZE, ADAPTIVE_THRESH_C);
-    return thresh;
-}
-
-cv::Mat preprocessPyramid(const cv::Mat& gray) {
     static cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(CLAHE_CLIP_LIMIT, cv::Size(8, 8));
     cv::Mat claheImg, thresh;
     clahe->apply(gray, claheImg);
@@ -357,7 +351,7 @@ std::string provideUserGuidance(cv::Mat& displayFrame, const std::vector<FinderP
         } else {
             // We have been aligned. Check if the timeout has been reached.
             auto elapsed_time = std::chrono::steady_clock::now() - last_good_alignment_time;
-            if (std::chrono::duration_cast<std::chrono::seconds>(elapsed_time).count() >= 2) {
+            if (std::chrono::duration_cast<std::chrono::seconds>(elapsed_time).count() >= 1) {
                 // We've been aligned for over 2 seconds without a decode. Provide new guidance.
                 guidance_text = "Walk forward slowly";
                 // Display it on screen as well for visual feedback
@@ -383,91 +377,50 @@ std::string processFrameForGuidance(cv::Mat& frame) {
     cv::Mat gray_original;
     cv::cvtColor(frame, gray_original, cv::COLOR_BGR2GRAY);
 
-    // --- High-detail central scan ---
-    int roi_y = frame.rows / 4;
-    int roi_height = frame.rows / 2;
-    cv::Rect central_roi_rect(0, roi_y, frame.cols, roi_height);
-    cv::Mat central_roi_gray = gray_original(central_roi_rect);
-
-    cv::Mat upscaled_roi_gray;
-    cv::resize(central_roi_gray, upscaled_roi_gray, cv::Size(), 4.0, 4.0, cv::INTER_CUBIC);
-
-    cv::Mat blurred, sharpened_roi_gray;
-    cv::GaussianBlur(upscaled_roi_gray, blurred, cv::Size(0, 0), 3);
-    cv::addWeighted(upscaled_roi_gray, 1.5, blurred, -0.5, 0, sharpened_roi_gray);
-
-    // Find patterns in the high-res ROI, passing the grayscale image directly.
-    std::vector<FinderPattern> patterns_from_roi = processFrameForFinderPatterns(
-            sharpened_roi_gray,
-            preprocessPyramid,
-            MIN_FINDER_AREA_ORIGINAL * 10.0
+    std::vector<FinderPattern> patterns = processFrameForFinderPatterns(
+            gray_original,
+            preprocessImage,
+            MIN_FINDER_AREA_ORIGINAL
     );
 
-    // Convert ROI coordinates back to original frame space
-    for (auto& p : patterns_from_roi) {
-        p.center /= 4.0;
-        p.center += cv::Point2f(central_roi_rect.x, central_roi_rect.y);
-        p.area /= 16.0;
-        for (auto& point : p.actual_contour) {
-            point.x = static_cast<int>(point.x / 4.0) + central_roi_rect.x;
-            point.y = static_cast<int>(point.y / 4.0) + central_roi_rect.y;
-        }
-    }
+    if (patterns.size() < 2) {
+        // --- High-detail central scan ---
+        int roi_y = frame.rows / 4;
+        int roi_height = frame.rows / 2;
+        cv::Rect central_roi_rect(0, roi_y, frame.cols, roi_height);
+        cv::Mat central_roi_gray = gray_original(central_roi_rect);
 
-    std::vector<FinderPattern> all_patterns = patterns_from_roi;
+        cv::Mat upscaled_roi_gray;
+        cv::resize(central_roi_gray, upscaled_roi_gray, cv::Size(), 4.0, 4.0, cv::INTER_CUBIC);
 
-    // Run standard detection on the original grayscale image
-    std::vector<FinderPattern> patterns_original = processFrameForFinderPatterns(
-            gray_original, preprocessImage, MIN_FINDER_AREA_ORIGINAL);
-    all_patterns.insert(all_patterns.end(), patterns_original.begin(), patterns_original.end());
+        cv::Mat blurred, sharpened_roi_gray;
+        cv::GaussianBlur(upscaled_roi_gray, blurred, cv::Size(0, 0), 3);
+        cv::addWeighted(upscaled_roi_gray, 1.5, blurred, -0.5, 0, sharpened_roi_gray);
 
-    if (all_patterns.size() < 3) {
-        // Run pyramid detection on a scaled version of the grayscale image
-        cv::Mat gray_pyramid;
-        cv::resize(gray_original, gray_pyramid, cv::Size(), PYRAMID_SCALE_FACTOR, PYRAMID_SCALE_FACTOR, cv::INTER_LINEAR);
-        std::vector<FinderPattern> patterns_pyramid = processFrameForFinderPatterns(
-                gray_pyramid, preprocessPyramid, MIN_FINDER_AREA_PYRAMID);
+        // Find patterns in the high-res ROI, passing the grayscale image directly.
+        patterns = processFrameForFinderPatterns(
+                sharpened_roi_gray,
+                preprocessImage,
+                MIN_FINDER_AREA_ORIGINAL * 10.0
+        );
 
-        // Scale back results from pyramid
-        for(auto& p : patterns_pyramid) {
-            p.center /= PYRAMID_SCALE_FACTOR;
-            p.area /= (PYRAMID_SCALE_FACTOR * PYRAMID_SCALE_FACTOR);
-            for(auto& point : p.actual_contour) {
-                point.x = static_cast<int>(point.x / PYRAMID_SCALE_FACTOR);
-                point.y = static_cast<int>(point.y / PYRAMID_SCALE_FACTOR);
+        // Convert ROI coordinates back to original frame space
+        for (auto& p : patterns) {
+            p.center /= 4.0;
+            p.center += cv::Point2f(central_roi_rect.x, central_roi_rect.y);
+            p.area /= 16.0;
+            for (auto& point : p.actual_contour) {
+                point.x = static_cast<int>(point.x / 4.0) + central_roi_rect.x;
+                point.y = static_cast<int>(point.y / 4.0) + central_roi_rect.y;
             }
         }
-        all_patterns.insert(all_patterns.end(), patterns_pyramid.begin(), patterns_pyramid.end());
     }
 
-    // --- Deduplication and Final Selection Logic ---
-    std::vector<FinderPattern> final_patterns;
-    if (!all_patterns.empty()) {
-        std::vector<bool> taken(all_patterns.size(), false);
-        for (size_t i = 0; i < all_patterns.size(); ++i) {
-            if (taken[i]) continue;
-            FinderPattern representative = all_patterns[i];
-            int count = 1;
-            for (size_t j = i + 1; j < all_patterns.size(); ++j) {
-                if (taken[j]) continue;
-                if (distanceSq(all_patterns[i].center, all_patterns[j].center) < (DEDUPE_DISTANCE_THRESH * DEDUPE_DISTANCE_THRESH)) {
-                    representative.center += all_patterns[j].center;
-                    representative.area += all_patterns[j].area;
-                    count++;
-                    taken[j] = true;
-                }
-            }
-            representative.center /= count;
-            representative.area /= count;
-            final_patterns.push_back(representative);
-            taken[i] = true;
-        }
-    }
 
     std::string decoded_text = "";
-    if (final_patterns.size() >= 3) {
+    if (patterns.size() >= 3) {
         double totalArea = 0;
-        for (const auto& p : final_patterns) totalArea += p.area;
+        for (const auto& p : patterns) totalArea += p.area;
 
         // Check if the QR code's apparent size is within our target range
         if (totalArea >= MIN_DECODING_AREA && totalArea <= MAX_DECODING_AREA) {
@@ -479,7 +432,7 @@ std::string processFrameForGuidance(cv::Mat& frame) {
         }
     }
 
-    std::string guidance_message = provideUserGuidance(frame, final_patterns);
+    std::string guidance_message = provideUserGuidance(frame, patterns);
 
     // Return a combined string with a separator
     return decoded_text + "+" + guidance_message;

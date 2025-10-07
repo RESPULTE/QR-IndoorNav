@@ -22,6 +22,11 @@ import android.widget.Toast;
 
 import java.util.Locale;
 
+// ---------------------------------
+// Done by: Tan Keng Ze
+// --------------------------------
+
+
 public class ProgressActivity extends AppCompatActivity implements SensorEventListener, StepDetector.OnStepListener {
 
     private static final String TAG = "ProgressActivity";

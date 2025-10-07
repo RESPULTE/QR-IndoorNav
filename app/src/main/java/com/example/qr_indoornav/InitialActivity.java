@@ -10,6 +10,11 @@ import android.os.Bundle;
 import android.widget.ImageButton;
 import android.widget.Toast;
 
+// ---------------------------------
+// Done by: Lim Yeu Chuan
+// --------------------------------
+
+
 public class InitialActivity extends AppCompatActivity {
 
     // Define a key for passing the scanned data to MainActivity.

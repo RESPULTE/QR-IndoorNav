@@ -2,6 +2,11 @@ package com.example.qr_indoornav;
 
 import android.app.Application;
 
+// ---------------------------------
+// Done by: Lim Yeu Chuan
+// --------------------------------
+
+
 public class MainApplication extends Application {
 
     @Override

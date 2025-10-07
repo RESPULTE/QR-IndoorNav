@@ -5,6 +5,11 @@ import android.speech.tts.TextToSpeech;
 import android.util.Log;
 import java.util.Locale;
 
+// ---------------------------------
+// Done by: Lim Yeu Chuan
+// --------------------------------
+
+
 public class TextToVoiceHelper {
     private static final String TAG = "TextToVoiceHelper";
     private TextToSpeech textToSpeech;

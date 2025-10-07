@@ -1,6 +1,13 @@
 #ifndef QR_INDOORNAV_QRDECODER_H
 #define QR_INDOORNAV_QRDECODER_H
 
+// ---------------------------------
+// Done by: Lau Yue Jie
+// --------------------------------
+
+
+
+
 #include <opencv2/opencv.hpp>
 #include <string>
 

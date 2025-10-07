@@ -36,6 +36,11 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+// ---------------------------------
+// Done by: Tan Keng Ze
+// --------------------------------
+
+
 public class CompassActivity extends AppCompatActivity implements SensorEventListener {
 
     // --- Request codes ---

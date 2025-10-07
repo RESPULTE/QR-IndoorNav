@@ -1,5 +1,10 @@
 package com.example.qr_indoornav.model;
 
+// ---------------------------------
+// Done by: Lau Yue Jie
+// --------------------------------
+
+
 public class Location {
     public final String id; // e.g., "N1" or "R101"
     public final String displayName; // e.g., "Junction N1" or "Room R101"

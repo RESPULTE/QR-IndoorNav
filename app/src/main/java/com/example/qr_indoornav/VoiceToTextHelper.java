@@ -7,6 +7,11 @@ import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import java.util.Locale;
 
+// ---------------------------------
+// Done by: Lim Yeu Chuan
+// --------------------------------
+
+
 public class VoiceToTextHelper {
 
     private final Context context;

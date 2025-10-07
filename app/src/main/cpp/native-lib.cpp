@@ -1,6 +1,9 @@
 #include <jni.h>
 #include <opencv2/opencv.hpp>
 #include "Guidance.h"
+// ---------------------------------
+// Done by: Lim Yeu Chuan
+// --------------------------------
 
 extern "C"
 JNIEXPORT jstring JNICALL

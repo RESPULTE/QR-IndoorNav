@@ -1,26 +1,9 @@
 package com.example.qr_indoornav;
 
-/**
- * A unified module for simple dead reckoning, handling step detection, position tracking,
- * and error accumulation to determine when realignment is necessary.
- *
- * REFINEMENTS (Dead Reckoning Model):
- * 1.  Position Tracking: Instead of just counting steps, this class now tracks the user's
- *     estimated (x, y) position in meters. It assumes the user starts at (0, 0).
- *
- * 2.  Accumulated Error Calculation: The system maintains an "ideal" position, which is where
- *     the user *should* be if they walked perfectly straight along the target direction. The
- *     "accumulated error" is the real-world distance (in meters) between the user's
- *     actual estimated position and their ideal position.
- *
- * 3.  Smarter Recalibration Prompts: The `needsRealignment()` method now triggers when the
- *     accumulated error distance exceeds a set threshold. This is more intelligent than
- *     counting "bad steps," as it correctly handles users who are slightly off but generally
- *     moving in the right direction. It only flags users who are genuinely drifting off course.
- *
- * 4.  Dynamic Step Length: Step length is now calculated based on user height during
- *     calibration, providing a more personalized experience.
- */
+// ---------------------------------
+// Done by: Tan Keng Ze
+// --------------------------------
+
 public class StepDetector {
 
     // --- Listener Interface ---
@@ -44,8 +27,6 @@ public class StepDetector {
     private static final int ALIGNMENT_DEGREE_MARGIN = 30;
     // A step is considered "forward" if it's within 90 degrees of the target. Beyond that, it's sideways or backward.
     private static final int MOVEMENT_DIRECTION_MARGIN_DEGREES = 90;
-    // The maximum allowed distance (in meters) between the user's actual and ideal path before recalibration is advised.
-    private static final float REALIGNMENT_DISTANCE_THRESHOLD_METERS = 2.0f;
 
     // --- State Variables ---
     private float dynamicThreshold;

@@ -1,5 +1,8 @@
 #ifndef QR_INDOORNAV_GUIDANCE_H
 #define QR_INDOORNAV_GUIDANCE_H
+// ---------------------------------
+// Done by: Lim Yeu Chuan
+// --------------------------------
 
 #include <opencv2/opencv.hpp>
 #include <string> // Add string include

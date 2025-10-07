@@ -31,11 +31,12 @@ import com.example.qr_indoornav.model.MapData;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
-import com.example.qr_indoornav.TtsManager; // Import the new manager
+// ---------------------------------
+// Done by: Lim Yeu Chuan
+// --------------------------------
+
 
 public class MainActivity extends AppCompatActivity {
 

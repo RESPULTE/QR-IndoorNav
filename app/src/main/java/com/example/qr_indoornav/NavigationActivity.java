@@ -14,6 +14,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+// ---------------------------------
+// Done by: Tan Keng Ze
+// --------------------------------
+
+
 public class NavigationActivity extends AppCompatActivity {
 
     private static final String TAG = "NavigationActivity";

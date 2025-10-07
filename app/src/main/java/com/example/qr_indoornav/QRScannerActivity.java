@@ -33,6 +33,11 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+// ---------------------------------
+// Done by: Lim Yeu Chuan
+// --------------------------------
+
+
 public class QRScannerActivity extends AppCompatActivity {
     private static final String TAG = "QRScannerActivity";
 

@@ -6,6 +6,11 @@ import android.util.Log;
 
 import java.util.Locale;
 
+// ---------------------------------
+// Done by: Lim Yeu Chuan
+// --------------------------------
+
+
 public class TtsManager {
 
     private static final String TAG = "TtsManager";

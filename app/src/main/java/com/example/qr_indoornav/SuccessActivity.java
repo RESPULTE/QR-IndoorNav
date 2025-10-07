@@ -10,6 +10,11 @@ import android.widget.ImageView;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 
+// ---------------------------------
+// Done by: Tan Keng Ze
+// --------------------------------
+
+
 public class SuccessActivity extends AppCompatActivity {
 
     @Override

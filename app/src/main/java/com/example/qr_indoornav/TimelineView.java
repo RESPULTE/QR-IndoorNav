@@ -16,6 +16,11 @@ import com.example.qr_indoornav.model.Location;
 import java.util.ArrayList;
 import java.util.List;
 
+// ---------------------------------
+// Done by: Lim Yeu Chuan
+// --------------------------------
+
+
 public class TimelineView extends View {
 
     private Paint redPaint, greenPaint, grayPaint, textPaint;

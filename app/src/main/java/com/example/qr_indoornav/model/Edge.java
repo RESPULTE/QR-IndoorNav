@@ -2,6 +2,10 @@ package com.example.qr_indoornav.model;
 
 import java.util.List;
 
+// ---------------------------------
+// Done by: Lau Yue Jie
+// --------------------------------
+
 public class Edge {
     public final String id;
     public final String toNodeId;
